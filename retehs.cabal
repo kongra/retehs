@@ -22,7 +22,9 @@ library
   if impl(ghc >= 6.8)
     ghc-options:     -fwarn-tabs
 
-  exposed-modules:
+  exposed-modules:   AI.Rete.Data
+                     AI.Rete.Flow
+
   other-extensions:  Safe
   build-depends:     base >=4.7 && <4.8,
                      stm >= 2.4.3,
