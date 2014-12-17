@@ -1,0 +1,40 @@
+* Role of tags
+  - Every /significant/ concept should be given a /tag/.
+  - What significant means is left as an excersise for the reader.
+  - Newtypes are preferable realizations of tags.
+
+* Relation between tags and procedures
+  Procedures are concepts themselves and they are significant. They
+  also produce data that are significant. A minimal approach to
+  tagging procedures assumes making their resulting type a
+  tag. Whether or not use a newtype to tag the signature of a
+  procedure as a whole is debatable.
+
+* When a procedure p depends on procedures p1 .. pn
+  Speaking precisely:
+  - p calls p1 .. pn somewhere in its body
+  - the *ordering* of p1 .. pn calls *does not matter*
+  - p1 .. pn have corresponding tags (return types) t1 .. tn
+  - the return type of p is t
+
+  Then the sole constructor of c must be of type t1 → .. → tn → t
+
+* When a procedure depends on procedures p1 .. pn being called in order
+  Speaking precisely:
+  - p calls p1 .. pn somewhere in its body
+  - the *ordering* of p1 .. pn calls *matters*
+  - p1 .. pn have corresponding tags (return types) t1 .. tn
+  - the return type of p is t
+
+  Then:
+  - the sole constructor of t2 must be of type t1   → t2
+  - the sole constructor of t3 must be of type t2   → t3
+  - ...                     ...                ...
+  - the sole constructor of tn must be of type tn-1 → tn
+  - the sole constructor of t  must be of type tn   → t
+
+
+* Tagging expressions and subexpressions
+  If necessary, wrap every significant expression and/or its
+  subexpressions within /inlined/ procedures and follow according to
+  the above.
