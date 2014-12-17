@@ -1,40 +1,80 @@
-* Role of tags
-  - Every /significant/ concept should be given a /tag/.
-  - What significant means is left as an excersise for the reader.
-  - Newtypes are preferable realizations of tags.
+Created: 2014-12-11
 
-* Relation between tags and procedures
-  Procedures are concepts themselves and they are significant. They
-  also produce data that are significant. A minimal approach to
-  tagging procedures assumes making their resulting type a
-  tag. Whether or not use a newtype to tag the signature of a
-  procedure as a whole is debatable.
+This document contains some more or less reasonable elements of
+programming style in Haskell.
 
-* When a procedure p depends on procedures p1 .. pn
-  Speaking precisely:
-  - p calls p1 .. pn somewhere in its body
-  - the *ordering* of p1 .. pn calls *does not matter*
-  - p1 .. pn have corresponding tags (return types) t1 .. tn
-  - the return type of p is t
+* Always use -Wall -W
 
-  Then the sole constructor of c must be of type t1 → .. → tn → t
+* Strive to make hlint quiet
 
-* When a procedure depends on procedures p1 .. pn being called in order
-  Speaking precisely:
-  - p calls p1 .. pn somewhere in its body
-  - the *ordering* of p1 .. pn calls *matters*
-  - p1 .. pn have corresponding tags (return types) t1 .. tn
-  - the return type of p is t
+* Necessarily use -Werror in production codes
 
-  Then:
-  - the sole constructor of t2 must be of type t1   → t2
-  - the sole constructor of t3 must be of type t2   → t3
-  - ...                     ...                ...
-  - the sole constructor of tn must be of type tn-1 → tn
-  - the sole constructor of t  must be of type tn   → t
+* Organize your codes not to tolerate any exceptions
+  other than (probably) those in IO monad.
+  - Look into foreign procedures to track their exception policy and
+    try to avoid any of these which potentially raise exceptions.
+  - When the elimination of a particular exception-raising procedure
+    is not possible, work out ways to handle the exceptions locally
+    and under no circumstances propagate it.
+  - When possible, proove the exception can't be raised in any of your
+    usage scenarios.
 
+* When necessary, constrain the sizes of collections
+  by wrapping in ADTs (preferably newtypes) and providing
+  mandatory (by encapsulation) constructors that enforce the
+  constraints on creation.
 
-* Tagging expressions and subexpressions
-  If necessary, wrap every significant expression and/or its
-  subexpressions within /inlined/ procedures and follow according to
-  the above.
+* Combining stuff
+
+** Tend to make endomorphisms/monoids the key elements of your API
+
+** Constraints should be put on as soon as possible
+   especially on data.
+
+** Avoid sub-typing and late binding in any situation
+
+** Avoid multiple (data) constructors if possible
+
+** Identify concepts in your design that take part in any combinations
+   even if these combinations are part of the internals, not
+   necessarily the interface.
+
+** Role of tags
+   - Every /significant/ concept should be given a /tag/.
+   - What significant means is left as an excersise for the reader.
+   - Newtypes are preferable realizations of tags.
+
+** Relation between tags and procedures
+   Procedures are concepts themselves and they are significant. They
+   also produce data that are significant. A minimal approach to
+   tagging procedures assumes making their resulting type a
+   tag. Whether or not use a newtype to tag the signature of a
+   procedure as a whole is debatable.
+
+** When a procedure p depends on procedures p1 .. pn
+   Speaking precisely:
+   - p calls p1 .. pn somewhere in its body
+   - the *ordering* of p1 .. pn calls *does not matter*
+   - p1 .. pn have corresponding tags (return types) t1 .. tn
+   - the return type of p is t
+
+   Then the sole constructor of c must be of type t1 → .. → tn → t
+
+** When a procedure depends on procedures p1 .. pn being called in order
+   Speaking precisely:
+   - p calls p1 .. pn somewhere in its body
+   - the *ordering* of p1 .. pn calls *matters*
+   - p1 .. pn have corresponding tags (return types) t1 .. tn
+   - the return type of p is t
+
+   Then:
+   - the sole constructor of t2 must be of type t1   → t2
+   - the sole constructor of t3 must be of type t2   → t3
+   - ...
+   - the sole constructor of tn must be of type tn-1 → tn
+   - the sole constructor of t  must be of type tn   → t
+
+** Tagging expressions and subexpressions
+   If necessary, wrap every significant expression and/or its
+   subexpressions within /inlined/ procedures and follow according to
+   the above.

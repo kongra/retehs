@@ -14,141 +14,228 @@
 ------------------------------------------------------------------------
 module AI.Rete.Data where
 
+import           Control.Concurrent.STM (STM, TVar)
+import qualified Data.HashMap.Strict as Map
+import qualified Data.HashSet as Set
+import           Data.Hashable (Hashable, hashWithSalt)
+import qualified Data.Sequence as Seq
+
 -- | Identifier type. We treat negative identifiers as special ones,
 -- and the non-negative as auto-generated.
 type ID = Int
 
-newtype SymbolId     = SymbolId     ID
-newtype VariableId   = VariableId   ID
-newtype SymbolName   = SymbolName   String
-newtype VariableName = VariableName String
+newtype SymbolId     = SymbolId     ID     deriving Eq
+newtype VariableId   = VariableId   ID     deriving Eq
+newtype SymbolName   = SymbolName   String deriving Show
+newtype VariableName = VariableName String deriving Show
+
+instance Hashable SymbolId where
+  hashWithSalt salt (SymbolId id') = salt `hashWithSalt` id'
+
+instance Hashable VariableId where
+  hashWithSalt salt (VariableId id') = salt `hashWithSalt` id'
 
 -- | Symbols are the atomic pieces of information managed by Rete.
 data Symbol = Symbol   !SymbolId   !SymbolName
             | Variable !VariableId !VariableName
 
--- Env
--- EnvIDState
--- EnvSymbolsRegistry
--- EnvWmesRegistry
--- EnvWmesByObj
--- EnvWmesByAttr
--- EnvWmesByVal
--- EnvAmems
--- EnvDtn
--- EnvDtt
--- EnvProductions
+instance Show Symbol where
+  show (Symbol   _ s) = show s
+  show (Variable _ s) = show s
 
--- Wme
--- WmeId
--- WmeObj
--- WmeAttr
--- WmeVal
--- WmeAmems
--- WmeToks
--- WmeNegJoinResults
+instance Eq Symbol where
+  (Symbol   id1 _) == (Symbol   id2 _) = id1 == id2
+  (Variable id1 _) == (Variable id2 _) = id1 == id2
+  _ == _ = False
+
+instance Hashable Symbol where
+  hashWithSalt salt (Symbol   id' _) = salt `hashWithSalt` id'
+  hashWithSalt salt (Variable id' _) = salt `hashWithSalt` id'
+
+newtype EnvIdState         = EnvIdState         ID
+newtype EnvSymbolsRegistry = EnvSymbolsRegistry (Map.HashMap SymbolName Symbol)
+newtype EnvWmesRegistry    = EnvWmesRegistry    (Map.HashMap WmeKey Wme)
+newtype EnvWmesByObj       = EnvWmesByObj       WmesIndex
+newtype EnvWmesByAttr      = EnvWmesByAttr      WmesIndex
+newtype EnvWmesByVal       = EnvWmesByVal       WmesIndex
+newtype EnvAmems           = EnvAmems           (Map.HashMap WmeKey Amem)
+newtype EnvDtn             = EnvDtn             Dtn
+newtype EnvDtt             = EnvDtt             Dtt
+newtype EnvProductions     = EnvProductions     (Set.HashSet PNode)
+
+-- | Environment
+data Env =
+  Env
+  {
+    -- State of the Env-wide ID generator
+    envIdState :: !(TVar EnvIdState)
+
+    -- Registry of (interned) Symbols
+  , envSymbolsRegistry :: !(TVar EnvSymbolsRegistry)
+
+    -- All Wmes indexed by their WmeKey
+  , envWmesRegistry :: !(TVar EnvWmesRegistry)
+
+    -- 3 Wme indexes by Wme Field value
+  , envWmesByObj  :: !(TVar EnvWmesByObj)
+  , envWmesByAttr :: !(TVar EnvWmesByAttr)
+  , envWmesByVal  :: !(TVar EnvWmesByVal)
+
+    -- Known alpha memories indexed by their WmeKey
+  , envAmems :: !(TVar EnvAmems)
+
+    -- Dummies
+  , envDtn :: !Dtn
+  , envDtt :: !Dtt
+
+    -- Productions the Env knows about
+  , envProductions :: !(TVar EnvProductions)
+  }
+
+-- | Working Memory Element
+data Wme =
+  Wme
+  {
+  }
+
+data Tok =
+  Tok
+  {
+  }
+
+data Dtt =
+  Dtt
+  {
+  }
+
+data GTok = Either Dtt Tok
+
+data Amem =
+  Amem
+  {
+  }
+
+data Dtn =
+  Dtn
+  {
+  }
+
+data PNode =
+  PNode
+  {
+  }
+
+-- newtype WmeId = WmeId
+-- newtype WmeObj = WmeObj
+-- newtype WmeAttr = WmeAttr
+-- newtype WmeVal = WmeVal
+-- newtype WmeAmems = WmeAmems
+-- newtype WmeToks = WmeToks
+-- newtype WmeNegJoinResults = WmeNegJoinResults
 
 -- Tok
--- TokId
--- TokParent
--- TokWme
--- TokNode
--- TokChildren
--- TokNegJoinResults
--- TokNccResults
--- TokOwner
+-- newtype TokId = TokId
+-- newtype TokParent = TokParent
+-- newtype TokWme = TokWme
+-- newtype TokNode = TokNode
+-- newtype TokChildren = TokChildren
+-- newtype TokNegJoinResults = TokNegJoinResults
+-- newtype TokNccResults = TokNccResults
+-- newtype TokOwner = TokOwner
 
 -- Dtt (Dummy Top Token)
 -- DttNode -> Dtn
 -- DttChildren
 
--- Field = Obj | Attr | Val deriving (Show, Eq)
+data Field = Obj | Attr | Val deriving (Show, Eq)
 
 -- WmesIndex = Map.HashMap Symbol (Set.HashSet Wme)
 
 -- Amem
--- AmemSuccessors
--- AmemRefCount
--- AmemWmes
--- AmemWmesByObj
--- AmemWmesByAttr
--- AmemWmesByVal
--- AmemObj
--- AmemAttr
--- AmemVal
+-- newtype AmemSuccessors = AmemSuccessors
+-- newtype AmemRefCount = AmemRefCount
+-- newtype AmemWmes = AmemWmes
+-- newtype AmemWmesByObj = AmemWmesByObj
+-- newtype AmemWmesByAttr = AmemWmesByAttr
+-- newtype AmemWmesByVal = AmemWmesByVal
+-- newtype AmemObj = AmemObj
+-- newtype AmemAttr = AmemAttr
+-- newtype AmemVal = AmemVal
 
 -- Dtn
--- DtnChildren
--- DtnToks
--- DtnAllChildren
+-- newtype DtnChildren = DtnChildren
+-- newtype DtnToks = DtnToks
+-- newtype DtnAllChildren = DtnAllChildren
 
--- BmemId
--- BmemParent
--- BmemChildren
--- BmemToks
--- BmemAllChildren
+-- newtype BmemId = BmemId
+-- newtype BmemParent = BmemParent
+-- newtype BmemChildren = BmemChildren
+-- newtype BmemToks = BmemToks
+-- newtype BmemAllChildren = BmemAllChildren
 
--- JoinNodeId
--- JoinNodeParent
--- JoinNodeChildren
--- JoinNodeAmem
--- JoinNodeNearestAncestor
--- JoinNodeJoinTests
--- JoinNodeLeftUnlinked
--- JoinNodeRightUnlinked
+-- newtype JoinNodeId = JoinNodeId
+-- newtype JoinNodeParent = JoinNodeParent
+-- newtype JoinNodeChildren = JoinNodeChildren
+-- newtype JoinNodeAmem = JoinNodeAmem
+-- newtype JoinNodeNearestAncestor = JoinNodeNearestAncestor
+-- newtype JoinNodeJoinTests = JoinNodeJoinTests
+-- newtype JoinNodeLeftUnlinked = JoinNodeLeftUnlinked
+-- newtype JoinNodeRightUnlinked = JoinNodeRightUnlinked
 
--- NegNodeId
--- NegNodeParent
--- NegNodeChildren
--- NegNodeToks
--- NegNodeAmem
--- NegNodeNearestAncestor
--- NegNodeJoinTests
--- NegNodeRightUnlinked
+-- newtype NegNodeId = NegNodeId
+-- newtype NegNodeParent = NegNodeParent
+-- newtype NegNodeChildren = NegNodeChildren
+-- newtype NegNodeToks = NegNodeToks
+-- newtype NegNodeAmem = NegNodeAmem
+-- newtype NegNodeNearestAncestor = NegNodeNearestAncestor
+-- newtype NegNodeJoinTests = NegNodeJoinTests
+-- newtype NegNodeRightUnlinked = NegNodeRightUnlinked
 
--- NccNodeId
--- NccNodeParent
--- NccNodeChildren
--- NccNodeToks
--- NccNodePartner
+-- newtype NccNodeId = NccNodeId
+-- newtype NccNodeParent = NccNodeParent
+-- newtype NccNodeChildren = NccNodeChildren
+-- newtype NccNodeToks = NccNodeToks
+-- newtype NccNodePartner = NccNodePartner
 
--- NccPartnerId
--- NccPartnerParent
--- NccPartnerChildren
--- NccPartnerNccNode
--- NccPartnerNoc (Number of Conjucts)
--- NccPartnerNewResultBuffer
+-- newtype NccPartnerId = NccPartnerId
+-- newtype NccPartnerParent = NccPartnerParent
+-- newtype NccPartnerChildren = NccPartnerChildren
+-- newtype NccPartnerNccNode = NccPartnerNccNode
+-- newtype NccPartnerNoc = NccPartnerNoc
+-- newtype NccPartnerNewResultBuffer = NccPartnerNewResultBuffer
 
--- PNodeId
--- PNodeParent
--- PNodeChildren
--- PNodeToks
--- PNodeAction
--- PNodeRevokeAction
--- PNodeBindings
+-- newtype PNodeId = PNodeId
+-- newtype PNodeParent = PNodeParent
+-- newtype PNodeChildren = PNodeChildren
+-- newtype PNodeToks = PNodeToks
+-- newtype PNodeAction = PNodeAction
+-- newtype PNodeRevokeAction = PNodeRevokeAction
+-- newtype PNodeBindings = PNodeBindings
 
--- Distance = Int
+-- -- Distance = Int
 
--- JoinTestField1
--- JoinTestField2
--- JoinTestDistance
+-- newtype JoinTestField1 = JoinTestField1
+-- newtype JoinTestField2 = JoinTestField2
+-- newtype JoinTestDistance = JoinTestDistance
 
--- NegJoinResultOwner
--- NegJoinResultWme
+-- newtype NegJoinResultOwner = NegJoinResultOwner
+-- newtype NegJoinResultWme = NegJoinResultWme
 
--- LocationField
--- LocationDistance
+-- newtype LocationField = LocationField
+-- newtype LocationDistance = LocationDistance
 
 -- Bindings
 
 -- Actx
--- ActxEnv
--- ActxNode
--- ActxTok
--- ActxWmes
+-- newtype ActxEnv = ActxEnv
+-- newtype ActxNode = ActxNode
+-- newtype ActxTok = ActxTok
+-- newtype ActxWmes = ActxWmes
 
 -- Action = Actx -> STM ()
 
--- WmeKey = Symbol Symbol Symbol
+data WmeKey = WmeKey !Symbol !Symbol !Symbol deriving Eq
+
+type WmesIndex = Map.HashMap Symbol (Set.HashSet Wme)
 
 -- Conds - TODO
