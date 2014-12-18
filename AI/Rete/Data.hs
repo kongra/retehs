@@ -138,18 +138,16 @@ instance Show WmeAttr where show (WmeAttr s) = show s
 instance Show WmeVal  where show (WmeVal  s) = show s
 
 instance Hashable WmeObj where
-  hashWithSalt salt (WmeObj s) = salt `hashWithSalt` s
-
+  hashWithSalt salt (WmeObj s)  = salt `hashWithSalt` s
 instance Hashable WmeAttr where
   hashWithSalt salt (WmeAttr s) = salt `hashWithSalt` s
-
 instance Hashable WmeVal where
-  hashWithSalt salt (WmeVal s) = salt `hashWithSalt` s
+  hashWithSalt salt (WmeVal s)  = salt `hashWithSalt` s
 
-newtype TokId             = TokId             Id          deriving Eq
+data    TokNode           = TokNode
+newtype TokId             = TokId             Id deriving Eq
 newtype TokParent         = TokParent         GTok
 newtype TokWme            = TokWme            (Maybe Wme)
-newtype TokNode           = TokNode           Node
 newtype TokChildren       = TokChildren       (Set.HashSet Tok)
 newtype TokNegJoinResults = TokNegJoinResults (Set.HashSet NegJoinResult)
 newtype TokNccResults     = TokNccResults     (Set.HashSet Tok)
@@ -201,7 +199,7 @@ newtype DttChildren = DttChildren (Set.HashSet Tok)
 data Dtt =
   Dtt
   {
-    -- | The node the token is in - DummyTopNode
+    -- | The node the token is in - Dummy Top Node
     dttNode :: !DttNode
 
     -- | The Toks with parent = this
@@ -224,63 +222,140 @@ instance Hashable WmeKey where
   hashWithSalt salt (WmeKey obj attr val) =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
-data NegJoinResult =
-  NegJoinResult
-  {
-  }
+newtype NJROwner = NJROwner Tok deriving Eq
+newtype NJRWme   = NJRWme   Wme deriving Eq
 
+-- | Negative join result
+data NegJoinResult =
+  NegJoinResult { njrOwner :: !NJROwner
+                , njrWme   :: !NJRWme } deriving Eq
+
+data    AmemSuccessor  = AmemSuccessor
+newtype AmemSuccessors = AmemSuccessors (Seq.Seq     AmemSuccessor)
+newtype AmemRefCount   = AmemRefCount   Int
+newtype AmemWmes       = AmemWmes       (Set.HashSet Wme)
+newtype AmemWmesByObj  = AmemWmesByObj  (WmesIndex   WmeObj)
+newtype AmemWmesByAttr = AmemWmesByAttr (WmesIndex   WmeAttr)
+newtype AmemWmesByVal  = AmemWmesByVal  (WmesIndex   WmeVal)
+newtype AmemObj        = AmemObj        Symbol deriving Eq
+newtype AmemAttr       = AmemAttr       Symbol deriving Eq
+newtype AmemVal        = AmemVal        Symbol deriving Eq
+
+-- | Alpha Memory
 data Amem =
   Amem
   {
+    -- | Successors must be a list, cause the ordering matters.
+    amemSuccessors :: !(TVar AmemSuccessors)
+
+    -- | The number of join or negative node using this Amem
+  , amemReferenceCount :: !(TVar AmemRefCount)
+
+    -- | The wmes in this α memory (unindexed)
+  , amemWmes :: !(TVar AmemWmes)
+
+    -- | Wmes are indexed by their Field value.
+  , amemWmesByObj  :: !(TVar AmemWmesByObj)
+  , amemWmesByAttr :: !(TVar AmemWmesByAttr)
+  , amemWmesByVal  :: !(TVar AmemWmesByVal)
+
+    -- | Keys to identify the α memory in the α memories registry
+  , amemObj  :: !AmemObj
+  , amemAttr :: !AmemAttr
+  , amemVal  :: !AmemVal
   }
 
-data Node =
-  Node
-  {
-  }
+instance Eq Amem where
+  Amem   { amemObj = obj1, amemAttr = attr1, amemVal = val1 } ==
+    Amem { amemObj = obj2, amemAttr = attr2, amemVal = val2 } =
+      obj1 == obj2 && attr1 == attr2 && val1 == val2
 
+instance Hashable Amem where
+  hashWithSalt salt Amem { amemObj = obj, amemAttr = attr, amemVal = val} =
+    salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
+
+instance Hashable AmemObj where
+  hashWithSalt salt (AmemObj s)  = salt `hashWithSalt` s
+instance Hashable AmemAttr where
+  hashWithSalt salt (AmemAttr s) = salt `hashWithSalt` s
+instance Hashable AmemVal where
+  hashWithSalt salt (AmemVal s)  = salt `hashWithSalt` s
+
+data    DtnChild       = DtnChild
+newtype DtnChildren    = DtnChildren    (Seq.Seq     DtnChild)
+newtype DtnAllChildren = DtnAllChildren (Set.HashSet DtnChild)
+
+-- | Dummy Top Node
 data Dtn =
   Dtn
   {
+    dtnChildren    :: !(TVar DtnChildren)
+  , dtnAllChildren :: !(TVar DtnAllChildren)
+  , dtnDtt         :: !Dtt
   }
 
-data PNode =
-  PNode
+data    BmemParent      = BmemParent
+data    BmemChild       = BmemChild
+newtype BmemId          = BmemId          Id deriving Eq
+newtype BmemChildren    = BmemChildren    (Seq.Seq     BmemChild)
+newtype BmemToks        = BmemToks        (Set.HashSet Tok)
+newtype BmemAllChildren = BmemAllChildren (Set.HashSet BmemChild)
+
+-- | Beta Memory
+data Bmem =
+  Bmem
   {
+    bmemId          :: !BmemId
+  , bmemParent      :: !BmemParent
+  , bmemChildren    :: !(TVar BmemChildren)
+
+  , bmemAllChildren :: !(TVar BmemAllChildren)
+  , bmemToks        :: !(TVar BmemToks)
   }
 
--- WmesIndex = Map.HashMap Symbol (Set.HashSet Wme)
+instance Eq Bmem where
+  Bmem { bmemId = id1 } == Bmem { bmemId = id2 } = id1 == id2
 
--- Amem
--- newtype AmemSuccessors = AmemSuccessors
--- newtype AmemRefCount = AmemRefCount
--- newtype AmemWmes = AmemWmes
--- newtype AmemWmesByObj = AmemWmesByObj
--- newtype AmemWmesByAttr = AmemWmesByAttr
--- newtype AmemWmesByVal = AmemWmesByVal
--- newtype AmemObj = AmemObj
--- newtype AmemAttr = AmemAttr
--- newtype AmemVal = AmemVal
+newtype Distance     = Distance     Int      deriving Eq
+newtype JoinField1   = JoinField1   Field    deriving Eq
+newtype JoinField2   = JoinField2   Field    deriving Eq
+newtype JoinDistance = JoinDistance Distance deriving Eq
 
--- Dtn
--- newtype DtnChildren = DtnChildren
--- newtype DtnToks = DtnToks
--- newtype DtnAllChildren = DtnAllChildren
+data JoinTest =
+  JoinTest
+  {
+    joinField1   :: !JoinField1
+  , joinField2   :: !JoinField2
+  , joinDistance :: !JoinDistance
+  }
+  deriving Eq
 
--- newtype BmemId = BmemId
--- newtype BmemParent = BmemParent
--- newtype BmemChildren = BmemChildren
--- newtype BmemToks = BmemToks
--- newtype BmemAllChildren = BmemAllChildren
+data    JoinParent          = JoinParent
+data    JoinChild           = JoinChild
+data    JoinNearestAncestor = JoinNearestAncestor
+newtype JoinId              = JoinId            Id deriving Eq
+newtype JoinChildren        = JoinChildren      (Seq.Seq JoinChild)
+newtype JoinAmem            = JoinAmem          Amem
+newtype JoinTests           = JoinTests         [JoinTest]
+newtype JoinLeftUnlinked    = JoinLeftUnlinked  Bool
+newtype JoinRightUnlinked   = JoinRightUnlinked Bool
 
--- newtype JoinNodeId = JoinNodeId
--- newtype JoinNodeParent = JoinNodeParent
--- newtype JoinNodeChildren = JoinNodeChildren
--- newtype JoinNodeAmem = JoinNodeAmem
--- newtype JoinNodeNearestAncestor = JoinNodeNearestAncestor
--- newtype JoinNodeJoinTests = JoinNodeJoinTests
--- newtype JoinNodeLeftUnlinked = JoinNodeLeftUnlinked
--- newtype JoinNodeRightUnlinked = JoinNodeRightUnlinked
+data Join =
+  Join
+  {
+    joinId             :: !JoinId
+  , joinParent         :: !JoinParent
+  , joinChildren       :: !(TVar JoinChildren)
+
+  , joinAmem           :: !JoinAmem
+  , joinNearesAncestor :: !JoinNearestAncestor
+  , joinTests          :: !JoinTests
+  , joinLeftUnlinked   :: !(TVar JoinLeftUnlinked)
+  , joinRightUnlinked  :: !(TVar JoinRightUnlinked)
+  }
+
+instance Eq Join where
+  Join { joinId = id1 } == Join { joinId = id2 } = id1 == id2
 
 -- newtype NegNodeId = NegNodeId
 -- newtype NegNodeParent = NegNodeParent
@@ -312,11 +387,11 @@ data PNode =
 -- newtype PNodeRevokeAction = PNodeRevokeAction
 -- newtype PNodeBindings = PNodeBindings
 
--- -- Distance = Int
+data PNode =
+  PNode
+  {
 
--- newtype JoinTestField1 = JoinTestField1
--- newtype JoinTestField2 = JoinTestField2
--- newtype JoinTestDistance = JoinTestDistance
+  }
 
 -- newtype NegJoinResultOwner = NegJoinResultOwner
 -- newtype NegJoinResultWme = NegJoinResultWme
@@ -332,7 +407,5 @@ data PNode =
 -- newtype ActxTok = ActxTok
 -- newtype ActxWmes = ActxWmes
 
--- Action = Actx -> STM ()
-
-
--- Conds - TODO
+data Actx = Actx {}
+type Action = Actx -> STM ()
