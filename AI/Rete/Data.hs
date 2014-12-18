@@ -12,7 +12,174 @@
 -- Maintainer  : kongra@gmail.com
 -- Stability   : experimental
 ------------------------------------------------------------------------
-module AI.Rete.Data where
+module AI.Rete.Data
+    (
+      -- * Environment
+      Env (..)
+    , Id
+
+      -- * Symbols
+    , Symbol (..)
+    , S      (..)
+
+      -- * Production components
+    , Action
+    , Actx (..)
+    , Cond (..)
+
+      -- * (Internal) structure of Rete network
+    , Amem     (..)
+    , Dtn      (..)
+    , Bmem     (..)
+    , Join     (..)
+    , JoinTest (..)
+    , Neg      (..)
+    , Ncc      (..)
+    , Partner  (..)
+    , Prod     (..)
+
+      -- * (Internal) data Rete operates on
+    , Dtt           (..)
+    , Tok           (..)
+    , GTok
+    , Wme           (..)
+    , NegJoinResult (..)
+
+      -- * Some (Internal) utilities
+    , WmesIndex
+    , WmeKey   (..)
+    , Field    (..)
+    , Location (..)
+    , Bindings (..)
+
+      -- * (Internal) Environment Tags
+    , EnvIdState         (..)
+    , EnvSymbolsRegistry (..)
+    , EnvWmesRegistry    (..)
+    , EnvWmesByObj       (..)
+    , EnvWmesByAttr      (..)
+    , EnvWmesByVal       (..)
+    , EnvAmems           (..)
+    , EnvDtn             (..)
+    , EnvDtt             (..)
+    , EnvProds           (..)
+
+      -- * (Internal) Symbol Tags
+    , SymbolId     (..)
+    , VariableId   (..)
+    , SymbolName   (..)
+    , VariableName (..)
+
+      -- * (Internal) Wme Tags
+    , WmeId             (..)
+    , WmeObj            (..)
+    , WmeAttr           (..)
+    , WmeVal            (..)
+    , WmeAmems          (..)
+    , WmeToks           (..)
+    , WmeNegJoinResults (..)
+
+      -- * (Internal) Token Tags
+    , TokNode           (..)
+    , TokId             (..)
+    , TokParent         (..)
+    , TokWme            (..)
+    , TokChildren       (..)
+    , TokNegJoinResults (..)
+    , TokNccResults     (..)
+    , TokOwner          (..)
+
+      -- * (Internal) Dtt Tags
+    , DttNode     (..)
+    , DttChildren (..)
+
+      -- * (Internal) Negative Join Result Tags
+    , NJROwner (..)
+    , NJRWme   (..)
+
+      -- * (Internal) Amem Tags
+    , AmemSuccessor  (..)
+    , AmemSuccessors (..)
+    , AmemRefCount   (..)
+    , AmemWmes       (..)
+    , AmemWmesByObj  (..)
+    , AmemWmesByAttr (..)
+    , AmemWmesByVal  (..)
+    , AmemObj        (..)
+    , AmemAttr       (..)
+    , AmemVal        (..)
+
+      -- * (Internal) Dtn Tags
+    , DtnChild       (..)
+    , DtnChildren    (..)
+    , DtnAllChildren (..)
+
+      -- * (Internal) Bmem Tags
+    , BmemParent      (..)
+    , BmemChild       (..)
+    , BmemId          (..)
+    , BmemChildren    (..)
+    , BmemToks        (..)
+    , BmemAllChildren (..)
+
+      -- * (Internal) JoinTest Tags
+    , Distance     (..)
+    , JoinField1   (..)
+    , JoinField2   (..)
+    , JoinDistance (..)
+
+      -- * (Internal) Join Tags
+    , JoinParent          (..)
+    , JoinChild           (..)
+    , JoinNearestAncestor (..)
+    , JoinId              (..)
+    , JoinChildren        (..)
+    , JoinAmem            (..)
+    , JoinTests           (..)
+    , JoinLeftUnlinked    (..)
+    , JoinRightUnlinked   (..)
+
+      -- * (Internal) Neg Tags
+    , NegParent          (..)
+    , NegChild           (..)
+    , NegNearestAncestor (..)
+    , NegId              (..)
+    , NegChildren        (..)
+    , NegToks            (..)
+    , NegAmem            (..)
+    , NegTests           (..)
+    , NegRightUnlinked   (..)
+
+      -- * (Internal) Ncc Tags
+    , NccParent   (..)
+    , NccChild    (..)
+    , NccId       (..)
+    , NccChildren (..)
+    , NccToks     (..)
+    , NccPartner  (..)
+
+      -- * (Internal) Partner Tags
+    , PartnerParent   (..)
+    , PartnerChild    (..)
+    , PartnerId       (..)
+    , PartnerChildren (..)
+    , PartnerNcc      (..)
+    , PartnerConjucts (..)
+    , PartnerBuff     (..)
+
+      -- * (Internal) Location Tags
+    , LocationField    (..)
+    , LocationDistance (..)
+
+      -- * (Internal) Prod Tags
+    , ProdParent       (..)
+    , ProdId           (..)
+    , ProdToks         (..)
+    , ProdAction       (..)
+    , ProdRevokeAction (..)
+    , ProdBindings     (..)
+    )
+    where
 
 import           Control.Concurrent.STM (STM, TVar)
 import qualified Data.HashMap.Strict as Map
@@ -207,7 +374,7 @@ data Dtt =
   }
 
 -- | Generalized Token
-data GTok = Either Dtt Tok
+type GTok = Either Dtt Tok
 
 -- | Field
 data Field = Obj | Attr | Val deriving (Show, Eq)
