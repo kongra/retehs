@@ -55,13 +55,13 @@ instance Hashable Symbol where
 newtype EnvIdState         = EnvIdState         Id
 newtype EnvSymbolsRegistry = EnvSymbolsRegistry (Map.HashMap SymbolName Symbol)
 newtype EnvWmesRegistry    = EnvWmesRegistry    (Map.HashMap WmeKey Wme)
-newtype EnvWmesByObj       = EnvWmesByObj       (WmesIndex WmeObj)
-newtype EnvWmesByAttr      = EnvWmesByAttr      (WmesIndex WmeAttr)
-newtype EnvWmesByVal       = EnvWmesByVal       (WmesIndex WmeVal)
+newtype EnvWmesByObj       = EnvWmesByObj       (WmesIndex   WmeObj)
+newtype EnvWmesByAttr      = EnvWmesByAttr      (WmesIndex   WmeAttr)
+newtype EnvWmesByVal       = EnvWmesByVal       (WmesIndex   WmeVal)
 newtype EnvAmems           = EnvAmems           (Map.HashMap WmeKey Amem)
 newtype EnvDtn             = EnvDtn             Dtn
 newtype EnvDtt             = EnvDtt             Dtt
-newtype EnvProductions     = EnvProductions     (Set.HashSet PNode)
+newtype EnvProds           = EnvProds           (Set.HashSet Prod)
 
 -- | Environment
 data Env =
@@ -89,7 +89,7 @@ data Env =
   , envDtt :: !Dtt
 
     -- | Productions the Env knows about
-  , envProductions :: !(TVar EnvProductions)
+  , envProds :: !(TVar EnvProds)
   }
 
 newtype WmeId             = WmeId             Id     deriving Eq
@@ -340,6 +340,7 @@ newtype JoinTests           = JoinTests         [JoinTest]
 newtype JoinLeftUnlinked    = JoinLeftUnlinked  Bool
 newtype JoinRightUnlinked   = JoinRightUnlinked Bool
 
+-- | Join Node
 data Join =
   Join
   {
@@ -357,55 +358,152 @@ data Join =
 instance Eq Join where
   Join { joinId = id1 } == Join { joinId = id2 } = id1 == id2
 
--- newtype NegNodeId = NegNodeId
--- newtype NegNodeParent = NegNodeParent
--- newtype NegNodeChildren = NegNodeChildren
--- newtype NegNodeToks = NegNodeToks
--- newtype NegNodeAmem = NegNodeAmem
--- newtype NegNodeNearestAncestor = NegNodeNearestAncestor
--- newtype NegNodeJoinTests = NegNodeJoinTests
--- newtype NegNodeRightUnlinked = NegNodeRightUnlinked
+data    NegParent          = NegParent
+data    NegChild           = NegChild
+data    NegNearestAncestor = NegNearestAncestor
+newtype NegId              = NegId            Id deriving Eq
+newtype NegChildren        = NegChildren      (Seq.Seq     NegChild)
+newtype NegToks            = NegToks          (Set.HashSet Tok)
+newtype NegAmem            = NegAmem          Amem
+newtype NegTests           = NegTests         [JoinTest]
+newtype NegRightUnlinked   = NegRightUnlinked Bool
 
--- newtype NccNodeId = NccNodeId
--- newtype NccNodeParent = NccNodeParent
--- newtype NccNodeChildren = NccNodeChildren
--- newtype NccNodeToks = NccNodeToks
--- newtype NccNodePartner = NccNodePartner
-
--- newtype NccPartnerId = NccPartnerId
--- newtype NccPartnerParent = NccPartnerParent
--- newtype NccPartnerChildren = NccPartnerChildren
--- newtype NccPartnerNccNode = NccPartnerNccNode
--- newtype NccPartnerNoc = NccPartnerNoc
--- newtype NccPartnerNewResultBuffer = NccPartnerNewResultBuffer
-
--- newtype PNodeId = PNodeId
--- newtype PNodeParent = PNodeParent
--- newtype PNodeChildren = PNodeChildren
--- newtype PNodeToks = PNodeToks
--- newtype PNodeAction = PNodeAction
--- newtype PNodeRevokeAction = PNodeRevokeAction
--- newtype PNodeBindings = PNodeBindings
-
-data PNode =
-  PNode
+-- | Negative Node
+data Neg =
+  Neg
   {
+    negId              :: !NegId
+  , negParent          :: !NegParent
+  , negChildren        :: !(TVar NegChildren)
 
+  , negToks            :: !(TVar NegToks)
+  , negAmem            :: !NegAmem
+  , negTests           :: !NegTests
+  , negNearestAncestor :: !NegNearestAncestor
+  , negRightUnlinked   :: !(TVar NegRightUnlinked)
   }
 
--- newtype NegJoinResultOwner = NegJoinResultOwner
--- newtype NegJoinResultWme = NegJoinResultWme
+instance Eq Neg where
+  Neg { negId = id1 } == Neg { negId = id2 } = id1 == id2
 
--- newtype LocationField = LocationField
--- newtype LocationDistance = LocationDistance
+data    NccParent   = NccParent
+data    NccChild    = NccChild
+newtype NccId       = NccId       Id deriving Eq
+newtype NccChildren = NccChildren (Seq.Seq     NccChild)
+newtype NccToks     = NccToks     (Set.HashSet Tok)
+newtype NccPartner  = NccPartner  Partner
 
--- Bindings
+data Ncc =
+  Ncc
+  {
+    nccId       :: !NccId
+  , nccParent   :: !NccParent
+  , nccChildren :: !(TVar NccChildren)
 
--- Actx
--- newtype ActxEnv = ActxEnv
--- newtype ActxNode = ActxNode
--- newtype ActxTok = ActxTok
--- newtype ActxWmes = ActxWmes
+  , nccToks     :: !(TVar NccToks)
+  , nccParner   :: !NccPartner
+  }
 
-data Actx = Actx {}
+instance Eq Ncc where
+  Ncc { nccId = id1 } == Ncc { nccId = id2 } = id1 == id2
+
+data    PartnerParent   = PartnerParent
+data    PartnerChild    = PartnerChild
+newtype PartnerId       = PartnerId       Id deriving Eq
+newtype PartnerChildren = PartnerChildren (Seq.Seq     PartnerChild)
+newtype PartnerNcc      = PartnerNcc      Ncc
+newtype PartnerConjucts = PartnerConjucts Int
+newtype PartnerBuff     = PartnerBuff     (Set.HashSet Tok)
+
+data Partner =
+  Partner
+  {
+    partnerId       :: !PartnerId
+  , partnerParent   :: !PartnerParent
+  , partnerChildren :: !(TVar PartnerChildren)
+
+  , partnerNcc      :: !PartnerNcc
+  , partnerConjucts :: !PartnerConjucts
+  , partnerBuff     :: !(TVar PartnerBuff)
+  }
+
+instance Eq Partner where
+  Partner { partnerId = id1 } == Partner { partnerId = id2 } = id1 == id2
+
+newtype LocationField    = LocationField    Field
+newtype LocationDistance = LocationDistance Distance
+
+-- | Symbol location describes the binding for a variable within a token.
+data Location = Location !LocationField !LocationDistance
+
+-- | A map of variable bindings for productions
+newtype Bindings = Bindings (Map.HashMap Symbol Location)
+
+data    ProdParent       = ProdParent
+newtype ProdId           = ProdId           Id deriving Eq
+newtype ProdToks         = ProdToks         (Set.HashSet Tok)
+newtype ProdAction       = ProdAction       Action
+newtype ProdRevokeAction = ProdRevokeAction (Maybe Action)
+newtype ProdBindings     = ProdBindings     Bindings
+
+-- | Production Node
+data Prod =
+  Prod
+  {
+    prodId           :: !ProdId
+  , prodParent       :: !ProdParent
+  , prodToks         :: !(TVar ProdToks)
+  , prodAction       :: !ProdAction
+  , prodRevokeAction :: !ProdRevokeAction
+  , prodBindings     :: !ProdBindings
+  }
+
+instance Eq Prod where
+  Prod { prodId = id1 } == Prod { prodId = id2 } = id1 == id2
+
+-- | Context of a production action
+data Actx =
+  Actx
+  {
+    actxEnv  :: !Env         -- ^ Current Env
+  , actxProd :: !Prod        -- ^ Production node
+  , actxTok  :: !Tok         -- ^ The matching token
+  , actxWmes :: [Maybe Wme]  -- ^ The token Wmes
+  }
+
+-- | Action of a production
 type Action = Actx -> STM ()
+
+-- | The user-friendly representation of symbols.
+data S = S   !String
+       | Sym !Symbol
+
+instance Show S where
+  show (S   s) = s
+  show (Sym s) = show s
+
+-- | The condition of a production.
+data Cond =
+  -- Positive conds
+    PosStr  !String !String  !String
+  | PosS    !S      !S       !S
+  | PosCond !WmeObj !WmeAttr !WmeVal -- canonical form
+
+  -- Neg conds
+  | NegStr  !String !String  !String
+  | NegS    !S      !S       !S
+  | NegCond !WmeObj !WmeAttr !WmeVal -- canonical form
+
+  -- Nccs
+  | NccCond ![Cond]
+
+instance Show Cond where
+  show (PosStr  o a v) =         show o ++ " " ++ show a ++ " " ++ show v
+  show (PosS    o a v) =         show o ++ " " ++ show a ++ " " ++ show v
+  show (PosCond o a v) =         show o ++ " " ++ show a ++ " " ++ show v
+
+  show (NegStr  o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+  show (NegS    o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+  show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+
+  show (NccCond conds) = "¬ " ++ show conds
