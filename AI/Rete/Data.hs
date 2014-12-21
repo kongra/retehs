@@ -60,8 +60,6 @@ module AI.Rete.Data
     , EnvWmesByAttr      (..)
     , EnvWmesByVal       (..)
     , EnvAmems           (..)
-    , EnvDtn             (..)
-    , EnvDtt             (..)
     , EnvProds           (..)
 
       -- * (Internal) Symbol Tags
@@ -89,10 +87,6 @@ module AI.Rete.Data
     , TokNccResults     (..)
     , TokOwner          (..)
 
-      -- * (Internal) Dtt Tags
-    , DttNode     (..)
-    , DttChildren (..)
-
       -- * (Internal) Negative Join Result Tags
     , NJROwner (..)
     , NJRWme   (..)
@@ -108,11 +102,6 @@ module AI.Rete.Data
     , AmemObj        (..)
     , AmemAttr       (..)
     , AmemVal        (..)
-
-      -- * (Internal) Dtn Tags
-    , DtnChild       (..)
-    , DtnChildren    (..)
-    , DtnAllChildren (..)
 
       -- * (Internal) Bmem Tags
     , BmemParent      (..)
@@ -226,8 +215,8 @@ newtype EnvWmesByObj       = EnvWmesByObj       (WmesIndex   WmeObj)
 newtype EnvWmesByAttr      = EnvWmesByAttr      (WmesIndex   WmeAttr)
 newtype EnvWmesByVal       = EnvWmesByVal       (WmesIndex   WmeVal)
 newtype EnvAmems           = EnvAmems           (Map.HashMap WmeKey Amem)
-newtype EnvDtn             = EnvDtn             Dtn
-newtype EnvDtt             = EnvDtt             Dtt
+-- newtype EnvDtn          = EnvDtn             Dtn
+-- newtype EnvDtt          = EnvDtt             Dtt
 newtype EnvProds           = EnvProds           (Set.HashSet Prod)
 
 -- | Environment
@@ -252,8 +241,8 @@ data Env =
   , envAmems :: !(TVar EnvAmems)
 
     -- Dummies
-  , envDtn :: !Dtn
-  , envDtt :: !Dtt
+  -- , envDtn :: !Dtn
+  -- , envDtt :: !Dtt
 
     -- | Productions the Env knows about
   , envProds :: !(TVar EnvProds)
@@ -359,19 +348,23 @@ instance Hashable TokId where
 instance Hashable Tok where
   hashWithSalt salt Tok { tokId = id' } = salt `hashWithSalt` id'
 
-newtype DttNode     = DttNode     Dtn
-newtype DttChildren = DttChildren (Set.HashSet Tok)
 
--- | Dummy Top Token
-data Dtt =
-  Dtt
-  {
-    -- | The node the token is in - Dummy Top Node
-    dttNode :: !DttNode
+-- | Dummy Top Token. Does not hold any internal data at all, just
+-- marks effective beginnings of Toks.
+data Dtt = Dtt
 
-    -- | The Toks with parent = this
-  , dttChildren :: !DttChildren
-  }
+-- newtype DttNode     = DttNode     Dtn
+-- newtype DttChildren = DttChildren (Set.HashSet Tok)
+-- -- | Dummy Top Token
+-- data Dtt =
+--   Dtt
+--   {
+--     -- | The node the token is in - Dummy Top Node
+--     dttNode :: !DttNode
+
+--     -- | Children of this Dtt (Token)
+--   , dttChildren :: !(TVar DttChildren)
+--   }
 
 -- | Generalized Token
 type GTok = Either Dtt Tok
@@ -448,18 +441,21 @@ instance Hashable AmemAttr where
 instance Hashable AmemVal where
   hashWithSalt salt (AmemVal s)  = salt `hashWithSalt` s
 
-data    DtnChild       = DtnChild
-newtype DtnChildren    = DtnChildren    (Seq.Seq     DtnChild)
-newtype DtnAllChildren = DtnAllChildren (Set.HashSet DtnChild)
+-- | Dummy Top Node does not hold any data at all. Just marks a top of
+-- the Rete net.
+data Dtn = Dtn
 
--- | Dummy Top Node
-data Dtn =
-  Dtn
-  {
-    dtnChildren    :: !(TVar DtnChildren)
-  , dtnAllChildren :: !(TVar DtnAllChildren)
-  , dtnDtt         :: !Dtt
-  }
+-- data    DtnChild       = DtnChild
+-- newtype DtnChildren    = DtnChildren    (Seq.Seq     DtnChild)
+-- newtype DtnAllChildren = DtnAllChildren (Set.HashSet DtnChild)
+-- -- | Dummy Top Node
+-- data Dtn =
+--   Dtn
+--   {
+--     dtnChildren    :: !(TVar DtnChildren)
+--   , dtnAllChildren :: !(TVar DtnAllChildren)
+--   , dtnDtt         :: !Dtt
+--   }
 
 data    BmemParent      = BmemParent
 data    BmemChild       = BmemChild
