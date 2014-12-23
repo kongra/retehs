@@ -55,6 +55,7 @@ module AI.Rete.Data
       -- * (Internal) Environment Tags
     , EnvIdState         (..)
     , EnvSymbolsRegistry (..)
+    , EnvVarsRegistry    (..)
     , EnvWmesRegistry    (..)
     , EnvWmesByObj       (..)
     , EnvWmesByAttr      (..)
@@ -182,14 +183,23 @@ type Id = Int
 
 newtype SymbolId     = SymbolId     Id     deriving Eq
 newtype VariableId   = VariableId   Id     deriving Eq
-newtype SymbolName   = SymbolName   String deriving Show
-newtype VariableName = VariableName String deriving Show
+newtype SymbolName   = SymbolName   String deriving Eq
+newtype VariableName = VariableName String deriving Eq
+
+instance Show SymbolName   where show (SymbolName   name) = name
+instance Show VariableName where show (VariableName name) = name
 
 instance Hashable SymbolId where
   hashWithSalt salt (SymbolId id') = salt `hashWithSalt` id'
 
 instance Hashable VariableId where
   hashWithSalt salt (VariableId id') = salt `hashWithSalt` id'
+
+instance Hashable SymbolName where
+  hashWithSalt salt (SymbolName name) = salt `hashWithSalt` name
+
+instance Hashable VariableName where
+  hashWithSalt salt (VariableName name) = salt `hashWithSalt` name
 
 -- | Symbols are the atomic pieces of information managed by Rete.
 data Symbol = Symbol   !SymbolId   !SymbolName
@@ -210,6 +220,7 @@ instance Hashable Symbol where
 
 newtype EnvIdState         = EnvIdState         Id
 newtype EnvSymbolsRegistry = EnvSymbolsRegistry (Map.HashMap SymbolName Symbol)
+newtype EnvVarsRegistry    = EnvVarsRegistry    (Map.HashMap VariableName Symbol)
 newtype EnvWmesRegistry    = EnvWmesRegistry    (Map.HashMap WmeKey Wme)
 newtype EnvWmesByObj       = EnvWmesByObj       (WmesIndex   WmeObj)
 newtype EnvWmesByAttr      = EnvWmesByAttr      (WmesIndex   WmeAttr)
@@ -228,6 +239,9 @@ data Env =
 
     -- | Registry of (interned) Symbols
   , envSymbolsRegistry :: !(TVar EnvSymbolsRegistry)
+
+    -- | Registry of (interned) Variables
+  , envVarsRegistry :: !(TVar EnvVarsRegistry)
 
     -- | All Wmes indexed by their WmeKey
   , envWmesRegistry :: !(TVar EnvWmesRegistry)

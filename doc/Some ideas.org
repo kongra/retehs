@@ -78,3 +78,12 @@ programming style in Haskell.
    If necessary, wrap every significant expression and/or its
    subexpressions within /inlined/ procedures and follow according to
    the above.
+
+** On the way the tags should be used
+   - Constructors of tags for record fields may be declared public
+   - Constructors of tags for procedures (their return types) *must
+     never* be declared public. Only a concrete procedure should be
+     able to use them.
+   - So please, encapsulate procedures with their (return) tags in
+     separate modules and hide the constructors of tags.
+   - Work out ways to avoid circular dependencies between modules.
