@@ -23,46 +23,20 @@ module AI.Rete.Flow.Genid
 
 import AI.Rete.Data
 import Control.Concurrent.STM
-import Control.Monad (when, liftM)
+import Control.Monad (when)
 
 -- GENERATING IDS
-newtype GenidRead  = GenidRead  EnvIdState
-newtype GenidCheck = GenidCheck ()
-newtype GenidNew   = GenidNew   Id
-newtype GenidWrite = GenidWrite ()
-newtype Genid      = Genid      { genidVal :: Id }
-
-genidRead :: Env -> STM GenidRead
-genidRead Env { envIdState = eid } = liftM GenidRead (readTVar eid)
-{-# INLINE genidRead #-}
-
-genidCheck :: GenidRead -> STM GenidCheck
-genidCheck (GenidRead (EnvIdState recent)) = do
-  -- Hopefully not in a reasonable time
-  when (recent == maxBound) (error "Id overflow, can't go on.")
-  return $! GenidCheck ()
-{-# INLINE genidCheck #-}
-
-genidNew :: GenidRead -> GenidCheck -> GenidNew
-genidNew (GenidRead (EnvIdState recent)) _ = GenidNew $! recent + 1
-{-# INLINE genidNew #-}
-
-genidWrite :: Env -> GenidNew -> STM GenidWrite
-genidWrite Env { envIdState = eid } (GenidNew new) = do
-  writeTVar eid  $! EnvIdState new
-  return (GenidWrite ())
-{-# INLINE genidWrite #-}
-
-genidResult :: GenidNew -> GenidWrite -> Genid
-genidResult (GenidNew new) _ = Genid { genidVal = new }
-{-# INLINE genidResult #-}
+newtype Genid = Genid { genidVal :: Id }
 
 -- | Generates a new Id.
 genid :: Env -> STM Genid
-genid env = do
-  r      <- genidRead   env
-  chk    <- genidCheck  r
-  let new = genidNew    r   chk
-  w      <- genidWrite  env new
-  return (genidResult new w)
+genid Env { envIdState = eid } = do
+  EnvIdState recent <- readTVar eid
+
+  -- Hopefully not in a reasonable time
+  when (recent == maxBound) (error "Id overflow, can't go on.")
+
+  let new = recent + 1
+  writeTVar eid $! EnvIdState new
+  return (Genid new)
 {-# INLINE genid #-}

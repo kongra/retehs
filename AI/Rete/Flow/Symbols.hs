@@ -30,7 +30,7 @@ import qualified Data.HashMap.Strict as Map
 -- SPECIAL SYMBOLS
 
 emptySymbol :: Symbol
-emptySymbol =  Symbol (SymbolId   (-1)) (SymbolName   "")
+emptySymbol =  Symbol (SymbolId (-1)) (SymbolName   "")
 
 emptyVariable :: Symbol
 emptyVariable =  Variable (VariableId (-2)) (VariableName "?")
@@ -46,53 +46,27 @@ newtype InternedSymbol = InternedSymbol { internedSymbol :: Symbol }
 -- | Interns and returns a Symbol represented by the String argument.
 internSymbol :: Env -> String -> STM InternedSymbol
 internSymbol env name = case namePred name of
-  ForEmptyName       tag -> forEmptyName       tag
-  ForOneCharVar      tag -> forOneCharVar      tag
-  ForOneCharSymbol   tag -> forOneCharSymbol   tag env (SymbolName name)
-  ForMultiCharVar    tag -> forMultiCharVar    tag env (VariableName name)
-  ForMultiCharSymbol tag -> forMultiCharSymbol tag env (SymbolName name)
+  EmptyName       -> return InternedSymbol { internedSymbol = emptySymbol   }
+  OneCharVar      -> return InternedSymbol { internedSymbol = emptyVariable }
+  OneCharSymbol   -> internStdSymbol env (SymbolName   name)
+  MultiCharVar    -> internVariable  env (VariableName name)
+  MultiCharSymbol -> internStdSymbol env (SymbolName   name)
 
-data EmptyName       = EmptyName       deriving Show
-data OneCharVar      = OneCharVar      deriving Show
-data OneCharSymbol   = OneCharSymbol   deriving Show
-data MultiCharVar    = MultiCharVar    deriving Show
-data MultiCharSymbol = MultiCharSymbol deriving Show
-
-data NamePred = ForEmptyName       EmptyName
-              | ForOneCharVar      OneCharVar
-              | ForOneCharSymbol   OneCharSymbol
-              | ForMultiCharVar    MultiCharVar
-              | ForMultiCharSymbol MultiCharSymbol deriving Show
+data NamePred = EmptyName
+              | OneCharVar
+              | OneCharSymbol
+              | MultiCharVar
+              | MultiCharSymbol deriving Show
 
 namePred :: String -> NamePred
-namePred ""   = ForEmptyName EmptyName
+namePred ""   = EmptyName
 namePred [c]
-  | c == '?'  = ForOneCharVar      OneCharVar
-  | otherwise = ForOneCharSymbol   OneCharSymbol
+  | c == '?'  = OneCharVar
+  | otherwise = OneCharSymbol
 namePred (c:_:_)
-  | c == '?'  = ForMultiCharVar    MultiCharVar
-  | otherwise = ForMultiCharSymbol MultiCharSymbol
+  | c == '?'  = MultiCharVar
+  | otherwise = MultiCharSymbol
 {-# INLINE namePred #-}
-
-forEmptyName :: EmptyName  -> STM InternedSymbol
-forEmptyName _ = return (InternedSymbol emptySymbol)
-{-# INLINE forEmptyName #-}
-
-forOneCharVar :: OneCharVar -> STM InternedSymbol
-forOneCharVar _  = return (InternedSymbol emptyVariable)
-{-# INLINE forOneCharVar #-}
-
-forOneCharSymbol :: OneCharSymbol -> Env -> SymbolName -> STM InternedSymbol
-forOneCharSymbol _ = internStdSymbol
-{-# INLINE forOneCharSymbol #-}
-
-forMultiCharVar :: MultiCharVar -> Env -> VariableName -> STM InternedSymbol
-forMultiCharVar _ = internVariable
-{-# INLINE forMultiCharVar #-}
-
-forMultiCharSymbol :: MultiCharSymbol -> Env -> SymbolName -> STM InternedSymbol
-forMultiCharSymbol _ = internStdSymbol
-{-# INLINE forMultiCharSymbol #-}
 
 internStdSymbol :: Env -> SymbolName -> STM InternedSymbol
 internStdSymbol env@Env { envSymbolsRegistry = ereg } name = do
@@ -112,6 +86,6 @@ internVariable env@Env { envVarsRegistry = ereg } name = do
     Just s  -> return (InternedSymbol s)
     Nothing -> do
       gid   <- genid env
-      let s =  Variable (VariableId (genidVal gid)) name
-      writeTVar ereg $! EnvVarsRegistry (Map.insert name s reg)
-      return (InternedSymbol s)
+      let v =  Variable (VariableId (genidVal gid)) name
+      writeTVar ereg $! EnvVarsRegistry (Map.insert name v reg)
+      return (InternedSymbol v)
