@@ -1,9 +1,5 @@
-{-# LANGUAGE CPP #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
-#if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 702
 {-# LANGUAGE Trustworthy #-}
-#endif
+{-# LANGUAGE RankNTypes #-}
 {-# OPTIONS_GHC -W -Wall #-}
 ------------------------------------------------------------------------
 -- |
@@ -17,151 +13,174 @@
 ------------------------------------------------------------------------
 module AI.Rete.Flow where
 
--- import           AI.Rete.Data
--- import           Control.Concurrent.STM
--- import           Control.Monad (when, liftM)
--- import qualified Data.HashMap.Strict as Map
--- import qualified Data.HashSet as Set
+import           AI.Rete.Data
+import           Control.Concurrent.STM
+import           Control.Monad (when, liftM)
+import           Data.Foldable (Foldable)
+import qualified Data.HashMap.Strict as Map
+import qualified Data.HashSet as Set
+import           Data.Hashable (Hashable)
+import           Kask.Control.Monad (mapMM_, forMM_, toListM)
 
--- class Box b a where
---   box   :: a -> b
---   unbox :: b -> a
+-- MISC. UTILS
 
--- modifyTBox' :: Box b a => TVar b -> (a -> a) -> STM ()
--- modifyTBox' var f = do
---   b <- readTVar var
---   let x = unbox b
---   writeTVar var $! box $! f x
--- {-# INLINE modifyTBox' #-}
+-- | A monadic (in STM monad) version of Set.null.
+nullTSet :: TVar (Set.HashSet a) -> STM Bool
+nullTSet = liftM Set.null . readTVar
+{-# INLINE nullTSet #-}
 
--- readTBox :: Box b a => TVar b -> STM a
--- readTBox var = liftM unbox (readTVar var)
--- {-# INLINE readTBox #-}
+-- | A monadic (in STM monad) version of Data.Foldable.toList.
+toListT :: Foldable f => TVar (f a) -> STM [a] -- TSeq a -> STM [a]
+toListT = toListM . readTVar
+{-# INLINE toListT #-}
 
--- -- | Creates a new, empty Env. The procedure is not tagged in any way
--- -- because it belongs to the API and there is no explicit dependency
--- -- on it.
--- createEnv :: STM Env
--- createEnv = do
---   idState         <- newTVar $! EnvIdState         0
---   symbolsRegistry <- newTVar $! EnvSymbolsRegistry Map.empty
---   varsRegistry    <- newTVar $! EnvVarsRegistry    Map.empty
---   wmesRegistry    <- newTVar $! EnvWmesRegistry    Map.empty
---   wmesByObj       <- newTVar $! EnvWmesByObj       Map.empty
---   wmesByAttr      <- newTVar $! EnvWmesByAttr      Map.empty
---   wmesByVal       <- newTVar $! EnvWmesByVal       Map.empty
---   amems           <- newTVar $! EnvAmems           Map.empty
---   prods           <- newTVar $! EnvProds           Set.empty
+-- WMES INDEXES MANIPULATION
 
---   return Env { envIdState         = idState
---              , envSymbolsRegistry = symbolsRegistry
---              , envVarsRegistry    = varsRegistry
---              , envWmesRegistry    = wmesRegistry
---              , envWmesByObj       = wmesByObj
---              , envWmesByAttr      = wmesByAttr
---              , envWmesByVal       = wmesByVal
---              , envAmems           = amems
---              , envProds           = prods }
+type WmesIndexOperator a =
+  (Hashable a, Eq a) => a -> Wme -> WmesIndex a -> WmesIndex a
 
--- -- GENERATING IDS
+-- | Creates an updated version of the wme index by putting a new
+-- wme under the key k.
+wmesIndexInsert ::  WmesIndexOperator a
+wmesIndexInsert k wme index = Map.insert k newSet index
+  where oldSet = Map.lookupDefault Set.empty k index
+        newSet = Set.insert wme oldSet
+{-# INLINE wmesIndexInsert #-}
 
--- -- | Generates a new Id.
--- genid :: Env -> STM Id
--- genid Env { envIdState = eid } = do
---   EnvIdState recent <- readTVar eid
+-- | Removes the passed wme (possibly) stored under the key k from the
+-- index.
+wmesIndexDelete :: WmesIndexOperator a
+wmesIndexDelete k wme index =
+  case Map.lookup k index of
+    Nothing     -> index
+    Just oldSet -> Map.insert k newSet index
+      where newSet = Set.delete wme oldSet
+{-# INLINE wmesIndexDelete #-}
 
---   -- Hopefully not in a reasonable time
---   when (recent == maxBound) (error "Id overflow, can't go on.")
+-- ENVIRONMENT
 
---   let new = recent + 1
---   writeTVar eid $! EnvIdState new
---   return new
--- {-# INLINE genid #-}
+-- | Creates and returns a new, empty Env.
+createEnv :: STM Env
+createEnv = do
+  idState    <- newTVar 0
+  constants  <- newTVar Map.empty
+  variables  <- newTVar Map.empty
+  wmes       <- newTVar Map.empty
+  wmesByObj  <- newTVar Map.empty
+  wmesByAttr <- newTVar Map.empty
+  wmesByVal  <- newTVar Map.empty
+  amems      <- newTVar Map.empty
+  prods      <- newTVar Set.empty
 
--- -- SPECIAL SYMBOLS
+  return Env { envIdState    = idState
+             , envConstants  = constants
+             , envVariables  = variables
+             , envWmes       = wmes
+             , envWmesByObj  = wmesByObj
+             , envWmesByAttr = wmesByAttr
+             , envWmesByVal  = wmesByVal
+             , envAmems      = amems
+             , envProds      = prods }
 
--- emptySymbol :: Symbol
--- emptySymbol =  Symbol (SymbolId (-1)) (SymbolName "")
+-- GENERATING IDS
 
--- emptyVariable :: Symbol
--- emptyVariable =  Variable (VariableId (-2)) (VariableName "?")
+-- | Generates a new Id.
+genid :: Env -> STM Id
+genid Env { envIdState = eid } = do
+  recent <- readTVar eid
 
--- -- | A wildcard (any) Symbol representation
--- wildcardSymbol :: Symbol
--- wildcardSymbol = Symbol (SymbolId   (-3)) (SymbolName "*")
+  -- Hopefully not in a reasonable time
+  when (recent == maxBound) (error "Id overflow, can't go on.")
 
--- -- INTERNING SYMBOLS
+  let new = recent + 1
+  writeTVar eid new
+  return new
+{-# INLINE genid #-}
 
--- -- | Interns and returns a Symbol represented by the String argument.
--- internSymbol :: Env -> String -> STM Symbol
--- internSymbol env name = case namePred name of
---   EmptySymbolName -> return emptySymbol
---   OneCharVar      -> return emptyVariable
---   OneCharSymbol   -> internStdSymbol env (SymbolName   name)
---   MultiCharVar    -> internVariable  env (VariableName name)
---   MultiCharSymbol -> internStdSymbol env (SymbolName   name)
+-- SPECIAL SYMBOLS
 
--- data NamePred = EmptySymbolName
---               | OneCharVar
---               | OneCharSymbol
---               | MultiCharVar
---               | MultiCharSymbol deriving Show
+emptyConstant :: Constant
+emptyConstant =  Constant (-1) ""
 
--- namePred :: String -> NamePred
--- namePred ""   = EmptySymbolName
--- namePred [c]
---   | c == '?'  = OneCharVar
---   | otherwise = OneCharSymbol
--- namePred (c:_:_)
---   | c == '?'  = MultiCharVar
---   | otherwise = MultiCharSymbol
--- {-# INLINE namePred #-}
+emptyVariable :: Variable
+emptyVariable =  Variable (-2) "?"
 
--- internStdSymbol :: Env -> SymbolName -> STM Symbol
--- internStdSymbol env@Env { envSymbolsRegistry = ereg } name = do
---   EnvSymbolsRegistry reg <- readTVar ereg
---   case Map.lookup name reg of
---     Just s  -> return s
---     Nothing -> do
---       id' <- genid env
---       let s =  Symbol (SymbolId id') name
---       writeTVar ereg $! EnvSymbolsRegistry $! Map.insert name s reg
---       return s
--- {-# INLINE internStdSymbol #-}
+wildcardConstant :: Constant
+wildcardConstant = Constant (-3) "*"
 
--- internVariable :: Env -> VariableName -> STM Symbol
--- internVariable env@Env { envVarsRegistry = ereg } name = do
---   EnvVarsRegistry reg <- readTVar ereg
---   case Map.lookup name reg of
---     Just s  -> return s
---     Nothing -> do
---       id' <- genid env
---       let v =  Variable (VariableId id') name
---       writeTVar ereg $! EnvVarsRegistry $! Map.insert name v reg
---       return v
--- {-# INLINE internVariable #-}
+-- INTERNING CONSTANTS AND VARIABLES
 
--- -- ALPHA MEMORY
+-- | Interns and returns a Symbol represented by the String argument.
+internSymbol :: Env -> String -> STM Symbol
+internSymbol env name = case symbolName name of
+  EmptyConst     -> return (Const emptyConstant)
+  EmptyVar       -> return (Var   emptyVariable)
+  OneCharConst   -> liftM Const (internConstant env name)
+  MultiCharVar   -> liftM Var   (internVariable env name)
+  MultiCharConst -> liftM Const (internConstant env name)
 
--- -- | Activates the alpha memory by passing it a wme.
--- activateAmem :: Amem -> Wme -> STM ()
--- activateAmem amem wme = do
---   addWmeToAmem amem wme
---   addAmemToWme amem wme
---   rightActivateAmemSuccessors amem wme
+data SymbolName = EmptyConst
+                | EmptyVar
+                | OneCharConst
+                | MultiCharVar
+                | MultiCharConst deriving Show
 
--- addWmeToAmem :: Amem -> Wme -> STM ()
--- addWmeToAmem = undefined
--- {-# INLINE addWmeToAmem #-}
+symbolName :: String -> SymbolName
+symbolName "" = EmptyConst
+symbolName [c]
+  | c == '?'  = EmptyVar
+  | otherwise = OneCharConst
+symbolName (c:_:_)
+  | c == '?'  = MultiCharVar
+  | otherwise = MultiCharConst
+{-# INLINE symbolName #-}
 
--- addAmemToWme :: Amem -> Wme -> STM ()
--- addAmemToWme amem Wme { wmeAmems = amems } = modifyTBox' amems (amem:)
--- {-# INLINE addAmemToWme #-}
+internConstant :: Env -> String -> STM Constant
+internConstant env name = do
+  cs <- readTVar (envConstants env)
+  case Map.lookup name cs of
+    Just c  -> return c
+    Nothing -> do
+      id' <- genid env
+      let c = Constant id' name
+      writeTVar (envConstants env) $! Map.insert name c cs
+      return c
+{-# INLINE internConstant #-}
 
--- rightActivateAmemSuccessors :: Amem -> Wme -> STM ()
--- rightActivateAmemSuccessors = undefined
--- {-# INLINE rightActivateAmemSuccessors #-}
+internVariable :: Env -> String -> STM Variable
+internVariable env name = do
+  vs <- readTVar (envVariables env)
+  case Map.lookup name vs of
+    Just v  -> return v
+    Nothing -> do
+      id' <- genid env
+      let v = Variable id' name
+      writeTVar (envVariables env) $! Map.insert name v vs
+      return v
+{-# INLINE internVariable #-}
 
--- instance Box WmeAmems [Amem] where
---   box                    = WmeAmems
---   unbox (WmeAmems amems) = amems
+-- ALPHA MEMORY
+
+-- | Activates the alpha memory by passing it a wme.
+activateAmem :: Amem -> Wme -> STM ()
+activateAmem amem wme = do
+  addWmeToAmem amem wme
+  addAmemToWme amem wme
+  rightActivateAmemSuccessors amem wme
+
+addWmeToAmem :: Amem -> Wme -> STM ()
+addWmeToAmem amem wme = do
+  modifyTVar' (amemWmes amem) (Set.insert wme)
+{-# INLINE addWmeToAmem #-}
+
+addAmemToWme :: Amem -> Wme -> STM ()
+addAmemToWme amem Wme { wmeAmems = amems } = modifyTVar' amems (amem:)
+{-# INLINE addAmemToWme #-}
+
+rightActivateAmemSuccessors :: Amem -> Wme -> STM ()
+rightActivateAmemSuccessors Amem { amemSuccessors = succs } wme =
+  mapMM_ (rightActivateAmemSuccessor wme) (toListT succs)
+{-# INLINE rightActivateAmemSuccessors #-}
+
+rightActivateAmemSuccessor :: Wme -> AmemSuccessor -> STM ()
+rightActivateAmemSuccessor = undefined
