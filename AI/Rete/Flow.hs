@@ -1,4 +1,6 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
 #if defined(__GLASGOW_HASKELL__) && __GLASGOW_HASKELL__ >= 702
 {-# LANGUAGE Trustworthy #-}
 #endif
@@ -15,111 +17,151 @@
 ------------------------------------------------------------------------
 module AI.Rete.Flow where
 
-import           AI.Rete.Data
-import           Control.Concurrent.STM
-import           Control.Monad (when)
-import qualified Data.HashMap.Strict as Map
-import qualified Data.HashSet as Set
+-- import           AI.Rete.Data
+-- import           Control.Concurrent.STM
+-- import           Control.Monad (when, liftM)
+-- import qualified Data.HashMap.Strict as Map
+-- import qualified Data.HashSet as Set
 
--- | Creates a new, empty Env. The procedure is not tagged in any way
--- because it belongs to the API and there is no explicit dependency
--- on it.
-createEnv :: STM Env
-createEnv = do
-  idState         <- newTVar $! EnvIdState         0
-  symbolsRegistry <- newTVar $! EnvSymbolsRegistry Map.empty
-  varsRegistry    <- newTVar $! EnvVarsRegistry    Map.empty
-  wmesRegistry    <- newTVar $! EnvWmesRegistry    Map.empty
-  wmesByObj       <- newTVar $! EnvWmesByObj       Map.empty
-  wmesByAttr      <- newTVar $! EnvWmesByAttr      Map.empty
-  wmesByVal       <- newTVar $! EnvWmesByVal       Map.empty
-  amems           <- newTVar $! EnvAmems           Map.empty
-  prods           <- newTVar $! EnvProds           Set.empty
+-- class Box b a where
+--   box   :: a -> b
+--   unbox :: b -> a
 
-  return Env { envIdState         = idState
-             , envSymbolsRegistry = symbolsRegistry
-             , envVarsRegistry    = varsRegistry
-             , envWmesRegistry    = wmesRegistry
-             , envWmesByObj       = wmesByObj
-             , envWmesByAttr      = wmesByAttr
-             , envWmesByVal       = wmesByVal
-             , envAmems           = amems
-             , envProds           = prods }
+-- modifyTBox' :: Box b a => TVar b -> (a -> a) -> STM ()
+-- modifyTBox' var f = do
+--   b <- readTVar var
+--   let x = unbox b
+--   writeTVar var $! box $! f x
+-- {-# INLINE modifyTBox' #-}
 
--- GENERATING IDS
+-- readTBox :: Box b a => TVar b -> STM a
+-- readTBox var = liftM unbox (readTVar var)
+-- {-# INLINE readTBox #-}
 
--- | Generates a new Id.
-genid :: Env -> STM Id
-genid Env { envIdState = eid } = do
-  EnvIdState recent <- readTVar eid
+-- -- | Creates a new, empty Env. The procedure is not tagged in any way
+-- -- because it belongs to the API and there is no explicit dependency
+-- -- on it.
+-- createEnv :: STM Env
+-- createEnv = do
+--   idState         <- newTVar $! EnvIdState         0
+--   symbolsRegistry <- newTVar $! EnvSymbolsRegistry Map.empty
+--   varsRegistry    <- newTVar $! EnvVarsRegistry    Map.empty
+--   wmesRegistry    <- newTVar $! EnvWmesRegistry    Map.empty
+--   wmesByObj       <- newTVar $! EnvWmesByObj       Map.empty
+--   wmesByAttr      <- newTVar $! EnvWmesByAttr      Map.empty
+--   wmesByVal       <- newTVar $! EnvWmesByVal       Map.empty
+--   amems           <- newTVar $! EnvAmems           Map.empty
+--   prods           <- newTVar $! EnvProds           Set.empty
 
-  -- Hopefully not in a reasonable time
-  when (recent == maxBound) (error "Id overflow, can't go on.")
+--   return Env { envIdState         = idState
+--              , envSymbolsRegistry = symbolsRegistry
+--              , envVarsRegistry    = varsRegistry
+--              , envWmesRegistry    = wmesRegistry
+--              , envWmesByObj       = wmesByObj
+--              , envWmesByAttr      = wmesByAttr
+--              , envWmesByVal       = wmesByVal
+--              , envAmems           = amems
+--              , envProds           = prods }
 
-  let new = recent + 1
-  writeTVar eid $! EnvIdState new
-  return new
-{-# INLINE genid #-}
+-- -- GENERATING IDS
 
--- SPECIAL SYMBOLS
+-- -- | Generates a new Id.
+-- genid :: Env -> STM Id
+-- genid Env { envIdState = eid } = do
+--   EnvIdState recent <- readTVar eid
 
-emptySymbol :: Symbol
-emptySymbol =  Symbol (SymbolId (-1)) (SymbolName "")
+--   -- Hopefully not in a reasonable time
+--   when (recent == maxBound) (error "Id overflow, can't go on.")
 
-emptyVariable :: Symbol
-emptyVariable =  Variable (VariableId (-2)) (VariableName "?")
+--   let new = recent + 1
+--   writeTVar eid $! EnvIdState new
+--   return new
+-- {-# INLINE genid #-}
 
--- | A wildcard (any) Symbol representation
-wildcardSymbol :: Symbol
-wildcardSymbol = Symbol (SymbolId   (-3)) (SymbolName "*")
+-- -- SPECIAL SYMBOLS
 
--- INTERNING SYMBOLS
+-- emptySymbol :: Symbol
+-- emptySymbol =  Symbol (SymbolId (-1)) (SymbolName "")
 
--- | Interns and returns a Symbol represented by the String argument.
-internSymbol :: Env -> String -> STM Symbol
-internSymbol env name = case namePred name of
-  EmptySymbolName -> return emptySymbol
-  OneCharVar      -> return emptyVariable
-  OneCharSymbol   -> internStdSymbol env (SymbolName   name)
-  MultiCharVar    -> internVariable  env (VariableName name)
-  MultiCharSymbol -> internStdSymbol env (SymbolName   name)
+-- emptyVariable :: Symbol
+-- emptyVariable =  Variable (VariableId (-2)) (VariableName "?")
 
-data NamePred = EmptySymbolName
-              | OneCharVar
-              | OneCharSymbol
-              | MultiCharVar
-              | MultiCharSymbol deriving Show
+-- -- | A wildcard (any) Symbol representation
+-- wildcardSymbol :: Symbol
+-- wildcardSymbol = Symbol (SymbolId   (-3)) (SymbolName "*")
 
-namePred :: String -> NamePred
-namePred ""   = EmptySymbolName
-namePred [c]
-  | c == '?'  = OneCharVar
-  | otherwise = OneCharSymbol
-namePred (c:_:_)
-  | c == '?'  = MultiCharVar
-  | otherwise = MultiCharSymbol
-{-# INLINE namePred #-}
+-- -- INTERNING SYMBOLS
 
-internStdSymbol :: Env -> SymbolName -> STM Symbol
-internStdSymbol env@Env { envSymbolsRegistry = ereg } name = do
-  EnvSymbolsRegistry reg <- readTVar ereg
-  case Map.lookup name reg of
-    Just s  -> return s
-    Nothing -> do
-      id' <- genid env
-      let s =  Symbol (SymbolId id') name
-      writeTVar ereg $! EnvSymbolsRegistry $! Map.insert name s reg
-      return s
-{-# INLINE internStdSymbol #-}
+-- -- | Interns and returns a Symbol represented by the String argument.
+-- internSymbol :: Env -> String -> STM Symbol
+-- internSymbol env name = case namePred name of
+--   EmptySymbolName -> return emptySymbol
+--   OneCharVar      -> return emptyVariable
+--   OneCharSymbol   -> internStdSymbol env (SymbolName   name)
+--   MultiCharVar    -> internVariable  env (VariableName name)
+--   MultiCharSymbol -> internStdSymbol env (SymbolName   name)
 
-internVariable :: Env -> VariableName -> STM Symbol
-internVariable env@Env { envVarsRegistry = ereg } name = do
-  EnvVarsRegistry reg <- readTVar ereg
-  case Map.lookup name reg of
-    Just s  -> return s
-    Nothing -> do
-      id' <- genid env
-      let v =  Variable (VariableId id') name
-      writeTVar ereg $! EnvVarsRegistry $! Map.insert name v reg
-      return v
-{-# INLINE internVariable #-}
+-- data NamePred = EmptySymbolName
+--               | OneCharVar
+--               | OneCharSymbol
+--               | MultiCharVar
+--               | MultiCharSymbol deriving Show
+
+-- namePred :: String -> NamePred
+-- namePred ""   = EmptySymbolName
+-- namePred [c]
+--   | c == '?'  = OneCharVar
+--   | otherwise = OneCharSymbol
+-- namePred (c:_:_)
+--   | c == '?'  = MultiCharVar
+--   | otherwise = MultiCharSymbol
+-- {-# INLINE namePred #-}
+
+-- internStdSymbol :: Env -> SymbolName -> STM Symbol
+-- internStdSymbol env@Env { envSymbolsRegistry = ereg } name = do
+--   EnvSymbolsRegistry reg <- readTVar ereg
+--   case Map.lookup name reg of
+--     Just s  -> return s
+--     Nothing -> do
+--       id' <- genid env
+--       let s =  Symbol (SymbolId id') name
+--       writeTVar ereg $! EnvSymbolsRegistry $! Map.insert name s reg
+--       return s
+-- {-# INLINE internStdSymbol #-}
+
+-- internVariable :: Env -> VariableName -> STM Symbol
+-- internVariable env@Env { envVarsRegistry = ereg } name = do
+--   EnvVarsRegistry reg <- readTVar ereg
+--   case Map.lookup name reg of
+--     Just s  -> return s
+--     Nothing -> do
+--       id' <- genid env
+--       let v =  Variable (VariableId id') name
+--       writeTVar ereg $! EnvVarsRegistry $! Map.insert name v reg
+--       return v
+-- {-# INLINE internVariable #-}
+
+-- -- ALPHA MEMORY
+
+-- -- | Activates the alpha memory by passing it a wme.
+-- activateAmem :: Amem -> Wme -> STM ()
+-- activateAmem amem wme = do
+--   addWmeToAmem amem wme
+--   addAmemToWme amem wme
+--   rightActivateAmemSuccessors amem wme
+
+-- addWmeToAmem :: Amem -> Wme -> STM ()
+-- addWmeToAmem = undefined
+-- {-# INLINE addWmeToAmem #-}
+
+-- addAmemToWme :: Amem -> Wme -> STM ()
+-- addAmemToWme amem Wme { wmeAmems = amems } = modifyTBox' amems (amem:)
+-- {-# INLINE addAmemToWme #-}
+
+-- rightActivateAmemSuccessors :: Amem -> Wme -> STM ()
+-- rightActivateAmemSuccessors = undefined
+-- {-# INLINE rightActivateAmemSuccessors #-}
+
+-- instance Box WmeAmems [Amem] where
+--   box                    = WmeAmems
+--   unbox (WmeAmems amems) = amems
