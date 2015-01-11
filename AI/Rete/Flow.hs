@@ -53,8 +53,7 @@ wmesIndexDelete :: WmesIndexOperator a
 wmesIndexDelete k wme index =
   case Map.lookup k index of
     Nothing     -> index
-    Just oldSet -> Map.insert k newSet index
-      where newSet = Set.delete wme oldSet
+    Just oldSet -> Map.insert k (Set.delete wme oldSet) index
 {-# INLINE wmesIndexDelete #-}
 
 -- ENVIRONMENT
@@ -89,7 +88,7 @@ genid :: Env -> STM Id
 genid Env { envIdState = eid } = do
   recent <- readTVar eid
 
-  -- Hopefully not in a reasonable time
+  -- Hopefully not in a achievable time
   when (recent == maxBound) (error "Id overflow, can't go on.")
 
   let new = recent + 1
@@ -164,23 +163,17 @@ internVariable env name = do
 -- | Activates the alpha memory by passing it a wme.
 activateAmem :: Amem -> Wme -> STM ()
 activateAmem amem wme = do
-  addWmeToAmem amem wme
-  addAmemToWme amem wme
-  rightActivateAmemSuccessors amem wme
+  -- Add wme to amem's registry and indices
+  modifyTVar' (amemWmes       amem) (Set.insert                    wme)
+  modifyTVar' (amemWmesByObj  amem) (wmesIndexInsert (wmeObj  wme) wme)
+  modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
+  modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
 
-addWmeToAmem :: Amem -> Wme -> STM ()
-addWmeToAmem amem wme = do
-  modifyTVar' (amemWmes amem) (Set.insert wme)
-{-# INLINE addWmeToAmem #-}
+  -- Add amem to wme's amems
+  modifyTVar' (wmeAmems wme) (amem:)
 
-addAmemToWme :: Amem -> Wme -> STM ()
-addAmemToWme amem Wme { wmeAmems = amems } = modifyTVar' amems (amem:)
-{-# INLINE addAmemToWme #-}
-
-rightActivateAmemSuccessors :: Amem -> Wme -> STM ()
-rightActivateAmemSuccessors Amem { amemSuccessors = succs } wme =
-  mapMM_ (rightActivateAmemSuccessor wme) (toListT succs)
-{-# INLINE rightActivateAmemSuccessors #-}
+  -- Activate amem successors
+  mapMM_ (rightActivateAmemSuccessor wme) (toListT (amemSuccessors amem))
 
 rightActivateAmemSuccessor :: Wme -> AmemSuccessor -> STM ()
 rightActivateAmemSuccessor = undefined
