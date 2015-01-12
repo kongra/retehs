@@ -1,5 +1,6 @@
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -W -Wall #-}
 ------------------------------------------------------------------------
 -- |
@@ -20,7 +21,7 @@ import           Data.Foldable (Foldable)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
-import           Kask.Control.Monad (mapMM_, forMM_, toListM)
+import           Kask.Control.Monad (mapMM_, toListM)
 
 -- MISC. UTILS
 
@@ -81,6 +82,48 @@ createEnv = do
              , envAmems      = amems
              , envProds      = prods }
 
+feedEnvIndexes :: Env -> Wme -> STM ()
+feedEnvIndexes
+  Env     { envWmesByObj  = byObj
+          , envWmesByAttr = byAttr
+          , envWmesByVal  = byVal }
+  wme@Wme { wmeObj        = obj
+          , wmeAttr       = attr
+          , wmeVal        = val } = do
+
+    let w = Const wildcardConstant
+
+    modifyTVar' byObj  (wmesIndexInsert obj      wme)
+    modifyTVar' byObj  (wmesIndexInsert (Obj w)  wme)
+
+    modifyTVar' byAttr (wmesIndexInsert attr     wme)
+    modifyTVar' byAttr (wmesIndexInsert (Attr w) wme)
+
+    modifyTVar' byVal  (wmesIndexInsert val      wme)
+    modifyTVar' byVal  (wmesIndexInsert (Val w)  wme)
+{-# INLINE feedEnvIndexes #-}
+
+deleteFromEnvIndexes :: Env -> Wme -> STM ()
+deleteFromEnvIndexes
+  Env     { envWmesByObj  = byObj
+          , envWmesByAttr = byAttr
+          , envWmesByVal  = byVal}
+  wme@Wme { wmeObj        = obj
+          , wmeAttr       = attr
+          , wmeVal        = val } = do
+
+    let w = Const wildcardConstant
+
+    modifyTVar' byObj  (wmesIndexDelete obj      wme)
+    modifyTVar' byObj  (wmesIndexDelete (Obj w)  wme)
+
+    modifyTVar' byAttr (wmesIndexDelete attr     wme)
+    modifyTVar' byAttr (wmesIndexDelete (Attr w) wme)
+
+    modifyTVar' byVal  (wmesIndexDelete val      wme)
+    modifyTVar' byVal  (wmesIndexDelete (Val w)  wme)
+{-# INLINE deleteFromEnvIndexes #-}
+
 -- GENERATING IDS
 
 -- | Generates a new Id.
@@ -88,7 +131,7 @@ genid :: Env -> STM Id
 genid Env { envIdState = eid } = do
   recent <- readTVar eid
 
-  -- Hopefully not in a achievable time
+  -- Hopefully not in a achievable time, but ...
   when (recent == maxBound) (error "Id overflow, can't go on.")
 
   let new = recent + 1
@@ -109,14 +152,20 @@ wildcardConstant = Constant (-3) "*"
 
 -- INTERNING CONSTANTS AND VARIABLES
 
--- | Interns and returns a Symbol represented by the String argument.
-internSymbol :: Env -> String -> STM Symbol
-internSymbol env name = case symbolName name of
-  EmptyConst     -> return (Const emptyConstant)
-  EmptyVar       -> return (Var   emptyVariable)
-  OneCharConst   -> liftM Const (internConstant env name)
-  MultiCharVar   -> liftM Var   (internVariable env name)
-  MultiCharConst -> liftM Const (internConstant env name)
+class InternSymbol a where
+  -- | Interns and returns a Symbol represented by the argument.
+  internSymbol :: Env -> a -> STM Symbol
+
+instance InternSymbol Symbol where
+  internSymbol _ = return
+
+instance InternSymbol String where
+  internSymbol env name = case symbolName name of
+    EmptyConst     -> return (Const emptyConstant)
+    EmptyVar       -> return (Var   emptyVariable)
+    OneCharConst   -> liftM  Const (internConstant env name)
+    MultiCharVar   -> liftM  Var   (internVariable env name)
+    MultiCharConst -> liftM  Const (internConstant env name)
 
 data SymbolName = EmptyConst
                 | EmptyVar
@@ -158,22 +207,128 @@ internVariable env name = do
       return v
 {-# INLINE internVariable #-}
 
+-- ACCESSING SYMBOLS (ALREADY INTERNED)
+
+-- | Only if there is an interned symbol of the given name, returns
+-- Just it, Nothing otherwise.
+internedSymbol :: Env -> String -> STM (Maybe Symbol)
+internedSymbol env name = case symbolName name of
+    EmptyConst     -> return $! Just (Const emptyConstant)
+    EmptyVar       -> return $! Just (Var   emptyVariable)
+    OneCharConst   -> internedConstant env name
+    MultiCharVar   -> internedVariable env name
+    MultiCharConst -> internedConstant env name
+
+internedConstant :: Env -> String -> STM (Maybe Symbol)
+internedConstant Env { envConstants = consts } name = do
+  cs <- readTVar consts
+  case Map.lookup name cs of
+    Nothing -> return Nothing
+    Just c  -> return $! Just (Const c)
+{-# INLINE internedConstant #-}
+
+internedVariable :: Env -> String -> STM (Maybe Symbol)
+internedVariable Env { envVariables = vars } name = do
+  vs <- readTVar vars
+  case Map.lookup name vs of
+    Nothing -> return Nothing
+    Just v  -> return $! Just (Var v)
+{-# INLINE internedVariable #-}
+
 -- ALPHA MEMORY
 
 -- | Activates the alpha memory by passing it a wme.
-activateAmem :: Amem -> Wme -> STM ()
-activateAmem amem wme = do
-  -- Add wme to amem's registry and indices
+activateAmem :: Env -> Amem -> Wme -> STM ()
+activateAmem env amem wme = do
+  -- Add wme to amem's registry and indices.
   modifyTVar' (amemWmes       amem) (Set.insert                    wme)
   modifyTVar' (amemWmesByObj  amem) (wmesIndexInsert (wmeObj  wme) wme)
   modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
   modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
 
-  -- Add amem to wme's amems
+  -- Add amem to wme's amems.
   modifyTVar' (wmeAmems wme) (amem:)
 
-  -- Activate amem successors
-  mapMM_ (rightActivateAmemSuccessor wme) (toListT (amemSuccessors amem))
+  -- Activate amem successors.
+  mapMM_ (rightActivateAmemSuccessor env wme) (toListT (amemSuccessors amem))
 
-rightActivateAmemSuccessor :: Wme -> AmemSuccessor -> STM ()
+rightActivateAmemSuccessor :: Env -> Wme -> AmemSuccessor -> STM ()
 rightActivateAmemSuccessor = undefined
+
+-- WMES
+
+class AddWme a where
+  -- | Adds the fact represented by the Wme fields into the working
+  -- memory and propagates the change downwards the Rete network. Returns
+  -- the corresponding Wme. If the fact was already present, nothing
+  -- happens, and Nothing is being returned.
+  addWme :: Env -> a -> a -> a -> STM (Maybe Wme)
+
+instance AddWme String where
+  addWme env obj attr val = do
+    obj'  <- internSymbol env obj
+    attr' <- internSymbol env attr
+    val'  <- internSymbol env val
+    addWme env obj' attr' val'
+
+instance AddWme Symbol where
+  addWme env obj attr val = do
+    let k = WmeKey (Obj obj) (Attr attr) (Val val)
+    wmes <- readTVar (envWmes env)
+    if Map.member k wmes
+      then return Nothing -- Already present, do nothing.
+      else do
+        wme <- createWme env (Obj obj) (Attr attr) (Val val)
+
+        -- Add wme to envWmes under k.
+        writeTVar (envWmes env) $! Map.insert k wme wmes
+
+        -- Add wme to env indexes (including wildcard key).
+        feedEnvIndexes env wme
+
+        -- Propagate wme into amems and return.
+        feedAmems env wme (Obj obj) (Attr attr) (Val val)
+        return (Just wme)
+
+-- | Creates an empty Wme.
+createWme :: Env -> Obj -> Attr -> Val -> STM Wme
+createWme env obj attr val = do
+  id'       <- genid env
+  amems     <- newTVar []
+  toks      <- newTVar Set.empty
+  njResults <- newTVar Set.empty
+
+  return Wme { wmeId             = id'
+             , wmeObj            = obj
+             , wmeAttr           = attr
+             , wmeVal            = val
+             , wmeAmems          = amems
+             , wmeToks           = toks
+             , wmeNegJoinResults = njResults }
+{-# INLINE createWme #-}
+
+-- | Looks for an Amem corresponding with WmeKey k and activates
+-- it. Does nothing unless finds one.
+feedAmem :: Env -> Wme -> WmeKey -> STM ()
+feedAmem env wme k = do
+  amems <- readTVar (envAmems env)
+  case Map.lookup k amems of
+    Just amem -> activateAmem env amem wme
+    Nothing   -> return ()
+{-# INLINE feedAmem #-}
+
+-- | Feeds proper Amems with a Wme.
+feedAmems :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
+feedAmems env wme o a v = do
+  let w = Const wildcardConstant
+
+  feedAmem env wme $! WmeKey o       a        v
+  feedAmem env wme $! WmeKey o       a        (Val w)
+  feedAmem env wme $! WmeKey o       (Attr w) v
+  feedAmem env wme $! WmeKey o       (Attr w) (Val w)
+
+  feedAmem env wme $! WmeKey (Obj w) a        v
+  feedAmem env wme $! WmeKey (Obj w) a        (Val w)
+  feedAmem env wme $! WmeKey (Obj w) (Attr w) v
+  feedAmem env wme $! WmeKey (Obj w) (Attr w) (Val w)
+{-# INLINE feedAmems #-}
