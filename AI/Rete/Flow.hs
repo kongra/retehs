@@ -347,3 +347,61 @@ feedAmems env wme o a v = do
   feedAmem env amems wme $! WmeKey (Obj w) (Attr w) v
   feedAmem env amems wme $! WmeKey (Obj w) (Attr w) (Val w)
 {-# INLINE feedAmems #-}
+
+-- TOKS
+
+-- | Creates a new Tok. It DOES NOT add it to the node (see
+-- makeAndInsertTok).
+makeTok :: Env -> ParentTok -> Maybe Wme -> TokNode -> STM Tok
+makeTok env parent wme node = do
+  id'        <- genid   env
+  children   <- newTVar Set.empty
+  njResults  <- newTVar Set.empty
+  nccResults <- newTVar Set.empty
+  owner      <- newTVar Nothing
+
+  let tok = Tok { tokId             = id'
+                , tokParent         = parent
+                , tokWme            = wme
+                , tokNode           = node
+                , tokChildren       = children
+                , tokNegJoinResults = njResults
+                , tokNccResults     = nccResults
+                , tokOwner          = owner}
+
+  -- Add tok to parent.children (for tree-based removal) ...
+  case parent of
+    ParentTok p -> modifyTVar' (tokChildren p) (Set.insert tok)
+    Dtt         -> return () -- ... but only unless Dtt (a rhetorical figure
+                             --     that is never deleted).
+
+  -- Add tok to wme.tokens (for tree-based-removal) ...
+  case wme of
+    Just w  -> modifyTVar' (wmeToks w) (Set.insert tok)
+    Nothing -> return () -- ... but only when wme is present.
+
+  return tok
+
+-- | Creates a new Tok and adds it to the tokset (presumably in the node).
+makeAndInsertTok :: Env -> ParentTok -> Maybe Wme
+                 -> TokNode -> TVar TokSet
+                 -> STM Tok
+makeAndInsertTok env parent wme node tokset = do
+  tok <- makeTok env parent wme node
+  modifyTVar' tokset (Set.insert tok)
+  return tok
+{-# INLINE makeAndInsertTok #-}
+
+-- BMEM
+
+-- | Performs left-activation of a Bmem.
+leftActivateBmem :: Env -> Bmem -> ParentTok -> Wme -> STM ()
+leftActivateBmem env bmem parent wme = do
+  tok <- makeAndInsertTok env parent (Just wme) (BmemTokNode bmem)
+         (bmemToks bmem)
+
+  mapMM_ (rightActivateBmemChild env tok) (toListT (bmemChildren bmem))
+{-# INLINE leftActivateBmem #-}
+
+rightActivateBmemChild :: Env -> Tok -> BmemChild -> STM ()
+rightActivateBmemChild = undefined
