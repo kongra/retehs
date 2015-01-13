@@ -157,7 +157,14 @@ class InternSymbol a where
   internSymbol :: Env -> a -> STM Symbol
 
 instance InternSymbol Symbol where
+  -- We may simply return the argument here, because Constants and
+  -- Variables once interned never expire (get un-interned). Otherwise
+  -- we would have to intern the argument's name.
   internSymbol _ = return
+
+instance InternSymbol S where
+  internSymbol env (S   s) = internSymbol env s
+  internSymbol env (Sym s) = internSymbol env s
 
 instance InternSymbol String where
   internSymbol env name = case symbolName name of
@@ -264,12 +271,21 @@ class AddWme a where
   -- happens, and Nothing is being returned.
   addWme :: Env -> a -> a -> a -> STM (Maybe Wme)
 
-instance AddWme String where
-  addWme env obj attr val = do
-    obj'  <- internSymbol env obj
-    attr' <- internSymbol env attr
-    val'  <- internSymbol env val
-    addWme env obj' attr' val'
+-- | Works like addWme inside an action (of a production).
+addWmeA :: AddWme a => Actx -> a -> a -> a -> STM (Maybe Wme)
+addWmeA actx = addWme (actxEnv actx)
+{-# INLINE addWmeA #-}
+
+instance AddWme String where addWme = addWmeInterningFields
+instance AddWme S      where addWme = addWmeInterningFields
+
+addWmeInterningFields :: InternSymbol a => Env -> a -> a -> a -> STM (Maybe Wme)
+addWmeInterningFields env obj attr val = do
+  obj'  <- internSymbol env obj
+  attr' <- internSymbol env attr
+  val'  <- internSymbol env val
+  addWme env obj' attr' val'
+{-# INLINE addWmeInterningFields #-}
 
 instance AddWme Symbol where
   addWme env obj attr val = do
@@ -309,26 +325,25 @@ createWme env obj attr val = do
 
 -- | Looks for an Amem corresponding with WmeKey k and activates
 -- it. Does nothing unless finds one.
-feedAmem :: Env -> Wme -> WmeKey -> STM ()
-feedAmem env wme k = do
-  amems <- readTVar (envAmems env)
-  case Map.lookup k amems of
-    Just amem -> activateAmem env amem wme
-    Nothing   -> return ()
+feedAmem :: Env -> Map.HashMap WmeKey Amem -> Wme -> WmeKey -> STM ()
+feedAmem env amems wme k = case Map.lookup k amems of
+  Just amem -> activateAmem env amem wme
+  Nothing   -> return ()
 {-# INLINE feedAmem #-}
 
 -- | Feeds proper Amems with a Wme.
 feedAmems :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
 feedAmems env wme o a v = do
   let w = Const wildcardConstant
+  amems <- readTVar (envAmems env)
 
-  feedAmem env wme $! WmeKey o       a        v
-  feedAmem env wme $! WmeKey o       a        (Val w)
-  feedAmem env wme $! WmeKey o       (Attr w) v
-  feedAmem env wme $! WmeKey o       (Attr w) (Val w)
+  feedAmem env amems wme $! WmeKey o       a        v
+  feedAmem env amems wme $! WmeKey o       a        (Val w)
+  feedAmem env amems wme $! WmeKey o       (Attr w) v
+  feedAmem env amems wme $! WmeKey o       (Attr w) (Val w)
 
-  feedAmem env wme $! WmeKey (Obj w) a        v
-  feedAmem env wme $! WmeKey (Obj w) a        (Val w)
-  feedAmem env wme $! WmeKey (Obj w) (Attr w) v
-  feedAmem env wme $! WmeKey (Obj w) (Attr w) (Val w)
+  feedAmem env amems wme $! WmeKey (Obj w) a        v
+  feedAmem env amems wme $! WmeKey (Obj w) a        (Val w)
+  feedAmem env amems wme $! WmeKey (Obj w) (Attr w) v
+  feedAmem env amems wme $! WmeKey (Obj w) (Attr w) (Val w)
 {-# INLINE feedAmems #-}
