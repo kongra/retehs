@@ -1,6 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# OPTIONS_GHC -W -Wall #-}
 ------------------------------------------------------------------------
 -- |
@@ -16,13 +17,14 @@ module AI.Rete.Flow where
 
 import           AI.Rete.Data
 import           Control.Concurrent.STM
-import           Control.Monad (when, liftM, liftM2)
-import           Data.Foldable (Foldable)
+import           Control.Monad (when, unless, liftM, liftM2, forM_)
+import           Data.Foldable (Foldable, toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe)
-import           Kask.Control.Monad (mapMM_, toListM)
+import qualified Data.Sequence as Seq
+import           Kask.Control.Monad (mapMM_, toListM, whenM)
 
 -- MISC. UTILS
 
@@ -35,6 +37,8 @@ nullTSet = liftM Set.null . readTVar
 toListT :: Foldable f => TVar (f a) -> STM [a] -- TSeq a -> STM [a]
 toListT = toListM . readTVar
 {-# INLINE toListT #-}
+
+class ToBool a where toBool :: a -> Bool
 
 -- WMES INDEXES MANIPULATION
 
@@ -455,16 +459,63 @@ amemWmesForTest :: [Maybe Wme] -> Amem -> JoinTest -> STM WmeSet
 amemWmesForTest wmes amem
   JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
     case f1 of
-      O -> amemWmesForIndex (amemWmesByObj  amem) (Obj  value)
-      A -> amemWmesForIndex (amemWmesByAttr amem) (Attr value)
-      V -> amemWmesForIndex (amemWmesByVal  amem) (Val  value)
+      O -> amemWmesForIndex (Obj  value) (amemWmesByObj  amem)
+      A -> amemWmesForIndex (Attr value) (amemWmesByAttr amem)
+      V -> amemWmesForIndex (Val  value) (amemWmesByVal  amem)
     where
       wme   = fromMaybe (error "PANIC (3): wmes !! d RETURNED Nothing.")
                         (wmes !! d)
       value = fieldSymbol f2 wme
 {-# INLINE amemWmesForTest #-}
 
-amemWmesForIndex :: (Hashable a, Eq a) => TVar (WmesIndex a) -> a -> STM WmeSet
-amemWmesForIndex index k =
+amemWmesForIndex :: (Hashable a, Eq a) => a -> TVar (WmesIndex a) -> STM WmeSet
+amemWmesForIndex k index =
   liftM (Map.lookupDefault Set.empty k) (readTVar index)
 {-# INLINE amemWmesForIndex #-}
+
+-- JOIN
+
+leftActivateJoin :: Env -> Join -> Tok -> STM ()
+leftActivateJoin env node tok = do
+  let amem = joinAmem node
+  isAmemEmpty <- nullTSet (amemWmes amem)
+
+  whenM (isRightUnlinked node) $ do -- When the parent just became non-empty.
+    relinkToAmem node
+    when isAmemEmpty $ leftUnlink node (joinParent node)
+
+  unless isAmemEmpty $ do
+    children <- readTVar (joinChildren node)
+    -- Only when we have children to activate ...
+    unless (Seq.null children) $ do
+      -- ... take matching Wmes from Amem indexes
+      wmes <- matchingAmemWmes (joinTests node) tok amem
+      -- and iterate all wmes over all children left-activating:
+      forM_ wmes $ \wme -> forM_ (toList children) $ \child ->
+        leftActivateJoinChild env child tok wme
+
+leftActivateJoinChild :: Env -> JoinChild -> Tok -> Wme -> STM ()
+leftActivateJoinChild = undefined
+
+instance IsRightUnlinked Join where
+  isRightUnlinked join = liftM toBool (readTVar (joinRightUnlinked join))
+
+instance LeftUnlink Join JoinParent where leftUnlink = undefined
+
+
+
+-- U/L
+
+instance ToBool LeftUnlinked  where toBool (LeftUnlinked  b) = b
+instance ToBool RightUnlinked where toBool (RightUnlinked b) = b
+
+class IsLeftUnlinked  a   where isLeftUnlinked  :: a -> STM Bool
+class IsRightUnlinked a   where isRightUnlinked :: a -> STM Bool
+class LeftUnlink      a p where leftUnlink      :: a -> p -> STM ()
+class RightUnlink     a p where rightUnlink     :: a -> p -> STM ()
+
+relinkToAmem :: a -> STM ()
+relinkToAmem = undefined
+
+relinkToBmem :: a -> STM ()
+relinkToBmem = undefined
