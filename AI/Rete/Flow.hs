@@ -16,11 +16,12 @@ module AI.Rete.Flow where
 
 import           AI.Rete.Data
 import           Control.Concurrent.STM
-import           Control.Monad (when, liftM)
+import           Control.Monad (when, liftM, liftM2)
 import           Data.Foldable (Foldable)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
+import           Data.Maybe (fromMaybe)
 import           Kask.Control.Monad (mapMM_, toListM)
 
 -- MISC. UTILS
@@ -132,7 +133,7 @@ genid Env { envIdState = eid } = do
   recent <- readTVar eid
 
   -- Hopefully not in a achievable time, but ...
-  when (recent == maxBound) (error "PANIC: Id OVERFLOW.")
+  when (recent == maxBound) (error "PANIC (1): Id OVERFLOW.")
 
   let new = recent + 1
   writeTVar eid new
@@ -415,11 +416,11 @@ leftActivateBmem env bmem parent wme = do
 rightActivateBmemChild :: Env -> Tok -> BmemChild -> STM ()
 rightActivateBmemChild = undefined
 
--- UNINDEXED JOIN TESTS
+-- UNINDEXED JOIN
 
 -- | Performs the join tests not using any kind of indexing. Useful
--- while right-activation, when the α memory passes a single wme, so
--- there is no use of the α memory indexing.
+-- while right-activation, when the Amem passes a single Wme, so
+-- there is no use of Amem indexing.
 performJoinTests :: [JoinTest] -> Tok -> Wme -> Bool
 performJoinTests tests tok wme = all (passJoinTest (tokWmes tok) wme) tests
 {-# INLINE performJoinTests #-}
@@ -428,10 +429,9 @@ passJoinTest :: [Maybe Wme] -> Wme -> JoinTest -> Bool
 passJoinTest wmes wme
   JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
     fieldSymbol f1 wme == fieldSymbol f2 wme2
-      where
-        wme2 = case wmes !! d of
-          Just w  -> w
-          Nothing -> error "PANIC: wmes !! d RETURNED Nothing."
+    where
+      wme2 = fromMaybe (error "PANIC (2): wmes !! d RETURNED Nothing.")
+                       (wmes !! d)
 
 -- | Returns a value of a Field in Wme.
 fieldSymbol :: Field -> Wme -> Symbol
@@ -439,3 +439,32 @@ fieldSymbol O Wme { wmeObj  = Obj  s } = s
 fieldSymbol A Wme { wmeAttr = Attr s } = s
 fieldSymbol V Wme { wmeVal  = Val  s } = s
 {-# INLINE fieldSymbol #-}
+
+-- INDEXED JOIN
+
+-- | Matches a token to wmes in Amem using the Amem's indexes.
+matchingAmemWmes :: [JoinTest] -> Tok -> Amem -> STM [Wme]
+matchingAmemWmes [] _ amem = toListT (amemWmes amem) -- No tests, take all Wmes.
+matchingAmemWmes tests tok amem = -- At least one test specified.
+  toListM (foldr (liftM2 Set.intersection) s sets)
+  where
+    (s:sets) = map (amemWmesForTest (tokWmes tok) amem) tests
+{-# INLINE matchingAmemWmes #-}
+
+amemWmesForTest :: [Maybe Wme] -> Amem -> JoinTest -> STM WmeSet
+amemWmesForTest wmes amem
+  JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
+    case f1 of
+      O -> amemWmesForIndex (amemWmesByObj  amem) (Obj  value)
+      A -> amemWmesForIndex (amemWmesByAttr amem) (Attr value)
+      V -> amemWmesForIndex (amemWmesByVal  amem) (Val  value)
+    where
+      wme   = fromMaybe (error "PANIC (3): wmes !! d RETURNED Nothing.")
+                        (wmes !! d)
+      value = fieldSymbol f2 wme
+{-# INLINE amemWmesForTest #-}
+
+amemWmesForIndex :: (Hashable a, Eq a) => TVar (WmesIndex a) -> a -> STM WmeSet
+amemWmesForIndex index k =
+  liftM (Map.lookupDefault Set.empty k) (readTVar index)
+{-# INLINE amemWmesForIndex #-}
