@@ -312,7 +312,7 @@ instance Eq       Tok where (==)         = eqOnId
 instance Hashable Tok where hashWithSalt = hashWithId
 
 -- | Rete nodes - successors of an Amem.
-data AmemSuccessor  = AmemSuccessor
+data AmemSuccessor = JoinAmemSuccessor !Join deriving Eq
 
 -- | Alpha Memory.
 data Amem =

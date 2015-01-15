@@ -25,6 +25,7 @@ import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (mapMM_, toListM, whenM)
+import           Kask.Data.Sequence (removeFirstOccurence)
 
 -- MISC. UTILS
 
@@ -480,7 +481,7 @@ leftActivateJoin env node tok = do
   let amem = joinAmem node
   isAmemEmpty <- nullTSet (amemWmes amem)
 
-  whenM (isRightUnlinked node) $ do -- When the parent just became non-empty.
+  whenM (isRightUnlinked node) $ do -- When node.parent just became non-empty.
     relinkToAmem node
     when isAmemEmpty $ leftUnlink node (joinParent node)
 
@@ -500,9 +501,39 @@ leftActivateJoinChild = undefined
 instance IsRightUnlinked Join where
   isRightUnlinked join = liftM toBool (readTVar (joinRightUnlinked join))
 
+instance IsLeftUnlinked Join where
+  isLeftUnlinked join = liftM toBool (readTVar (joinLeftUnlinked join))
+
 instance LeftUnlink Join JoinParent where leftUnlink = undefined
 
+instance RightUnlink Join where
+  rightUnlink node amem = do
+    writeTVar (joinRightUnlinked node) $! RightUnlinked True
+    modifyTVar' (amemSuccessors amem)
+      (removeFirstOccurence (JoinAmemSuccessor node))
 
+rightActivateJoin :: Env -> Join -> Wme -> STM ()
+rightActivateJoin env node wme = do
+  let amem   = joinAmem   node
+      parent = joinParent node
+
+  parentTokSet <- joinParentTokSet parent
+  let isParentEmpty = Set.null parentTokSet
+
+  whenM (isLeftUnlinked node) $ do -- When node.amem just became non-empty.
+    relinkToParent node parent
+    when isParentEmpty (rightUnlink node amem)
+
+  unless isParentEmpty $ do
+    children <- readTVar (joinChildren node)
+    unless (Seq.null children) $
+      forM_ (Set.toList parentTokSet) $ \tok ->
+        when (performJoinTests (joinTests node) tok wme) $
+          forM_ (toList children) $ \child ->
+            leftActivateJoinChild env child tok wme
+
+joinParentTokSet :: JoinParent -> STM TokSet
+joinParentTokSet = undefined
 
 -- U/L
 
@@ -512,10 +543,10 @@ instance ToBool RightUnlinked where toBool (RightUnlinked b) = b
 class IsLeftUnlinked  a   where isLeftUnlinked  :: a -> STM Bool
 class IsRightUnlinked a   where isRightUnlinked :: a -> STM Bool
 class LeftUnlink      a p where leftUnlink      :: a -> p -> STM ()
-class RightUnlink     a p where rightUnlink     :: a -> p -> STM ()
+class RightUnlink     a   where rightUnlink     :: a -> Amem -> STM ()
 
 relinkToAmem :: a -> STM ()
 relinkToAmem = undefined
 
-relinkToBmem :: a -> STM ()
-relinkToBmem = undefined
+relinkToParent :: a -> p -> STM ()
+relinkToParent = undefined
