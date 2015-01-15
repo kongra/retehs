@@ -132,7 +132,7 @@ genid Env { envIdState = eid } = do
   recent <- readTVar eid
 
   -- Hopefully not in a achievable time, but ...
-  when (recent == maxBound) (error "Id overflow, can't go on.")
+  when (recent == maxBound) (error "PANIC: Id OVERFLOW.")
 
   let new = recent + 1
   writeTVar eid new
@@ -153,7 +153,7 @@ wildcardConstant = Constant (-3) "*"
 -- INTERNING CONSTANTS AND VARIABLES
 
 class InternSymbol a where
-  -- | Interns and returns a Symbol represented by the argument.
+  -- | Interns and returns a Symbol for the name argument.
   internSymbol :: Env -> a -> STM Symbol
 
 instance InternSymbol Symbol where
@@ -392,6 +392,15 @@ makeAndInsertTok env parent wme node tokset = do
   return tok
 {-# INLINE makeAndInsertTok #-}
 
+-- | Returns a sequence of (Maybe) Wmes for a Tok.
+tokWmes :: Tok -> [Maybe Wme]
+tokWmes tok = loop tok [tokWme tok]
+  where
+    loop t wmes = case tokParent t of
+      Dtt         -> wmes
+      ParentTok p -> loop p (tokWme p : wmes)
+{-# INLINE tokWmes #-}
+
 -- BMEM
 
 -- | Performs left-activation of a Bmem.
@@ -405,3 +414,28 @@ leftActivateBmem env bmem parent wme = do
 
 rightActivateBmemChild :: Env -> Tok -> BmemChild -> STM ()
 rightActivateBmemChild = undefined
+
+-- UNINDEXED JOIN TESTS
+
+-- | Performs the join tests not using any kind of indexing. Useful
+-- while right-activation, when the α memory passes a single wme, so
+-- there is no use of the α memory indexing.
+performJoinTests :: [JoinTest] -> Tok -> Wme -> Bool
+performJoinTests tests tok wme = all (passJoinTest (tokWmes tok) wme) tests
+{-# INLINE performJoinTests #-}
+
+passJoinTest :: [Maybe Wme] -> Wme -> JoinTest -> Bool
+passJoinTest wmes wme
+  JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
+    fieldSymbol f1 wme == fieldSymbol f2 wme2
+      where
+        wme2 = case wmes !! d of
+          Just w  -> w
+          Nothing -> error "PANIC: wmes !! d RETURNED Nothing."
+
+-- | Returns a value of a Field in Wme.
+fieldSymbol :: Field -> Wme -> Symbol
+fieldSymbol O Wme { wmeObj  = Obj  s } = s
+fieldSymbol A Wme { wmeAttr = Attr s } = s
+fieldSymbol V Wme { wmeVal  = Val  s } = s
+{-# INLINE fieldSymbol #-}

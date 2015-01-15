@@ -19,17 +19,17 @@ module AI.Rete.Data
     , hashWithId
 
       -- * Symbolic data
-    , Constant (..)
-    , Variable (..)
-    , Symbol   (..)
-    , S        (..)
+    , Constant            (..)
+    , Variable            (..)
+    , Symbol              (..)
+    , S                   (..)
 
       -- * Environment
-    , Env (..)
+    , Env                 (..)
 
       -- * Working Memory Elements
-    , Wme   (..)
-    , WmeKey (..)
+    , Wme                 (..)
+    , WmeKey              (..)
     , WmeSet
     , WmesIndex
     , WmesByObj
@@ -37,72 +37,72 @@ module AI.Rete.Data
     , WmesByVal
 
       -- * Fields and their values
-    , Obj  (..)
-    , Attr (..)
-    , Val  (..)
-    , Field (..)
+    , Obj                 (..)
+    , Attr                (..)
+    , Val                 (..)
+    , Field               (..)
 
       -- * Tokens
-    , Tok (..)
-    , TokNode (..)
-    , ParentTok (..)
+    , Tok                 (..)
+    , TokNode             (..)
+    , ParentTok           (..)
     , TokSet
 
       -- Negative join results
-    , NegJoinResult (..)
+    , NegJoinResult       (..)
     , NegJoinResultSet
 
       -- α memory
-    , Amem (..)
-    , AmemSuccessor (..)
+    , Amem                (..)
+    , AmemSuccessor       (..)
 
       -- β memory
-    , Bmem (..)
-    , BmemParent (..)
-    , BmemChild (..)
+    , Bmem                (..)
+    , BmemParent          (..)
+    , BmemChild           (..)
 
       -- * Joins
-    , Join (..)
-    , JoinParent (..)
-    , JoinChild (..)
+    , Join                (..)
+    , JoinParent          (..)
+    , JoinChild           (..)
     , JoinNearestAncestor (..)
-    , JoinTest (..)
+    , JoinTest            (..)
 
       -- * Negation
-    , Neg (..)
-    , NegParent (..)
-    , NegChild (..)
-    , NegNearestAncestor (..)
+    , Neg                 (..)
+    , NegParent           (..)
+    , NegChild            (..)
+    , NegNearestAncestor  (..)
 
       -- * Negated conjunction
-    , Ncc (..)
-    , NccParent (..)
-    , NccChild (..)
+    , Ncc                 (..)
+    , NccParent           (..)
+    , NccChild            (..)
 
-    , Partner (..)
-    , PartnerParent (..)
-    , PartnerChild (..)
+    , Partner             (..)
+    , PartnerParent       (..)
+    , PartnerChild        (..)
 
       -- * Productions
-    , Prod (..)
-    , ProdParent (..)
-    , ProdChild (..)
+    , Prod                (..)
+    , ProdParent          (..)
+    , ProdChild           (..)
 
       -- * U/L
-    , RightUnlinked (..)
-    , LeftUnlinked (..)
+    , RightUnlinked       (..)
+    , LeftUnlinked        (..)
 
-      -- * Location data
+      -- * "Spatial" data
     , Distance
-    , Location (..)
+    , Location            (..)
 
       -- * Actions, variable bindings
     , Action
-    , Actx (..)
+    , Actx                (..)
     , Bindings
 
       -- * Conditions
-    , Cond (..)
+    , Cond                (..)
     )
     where
 
