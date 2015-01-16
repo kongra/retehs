@@ -569,7 +569,7 @@ leftActivateNeg env neg tok wme = do
       -- In the original Doorenbos pseudo-code there was a bug - wme
       -- was used instead of w in the 3 lines above.
 
-  -- If join results are empty, then inform children
+  -- If join results are empty, then inform children.
   whenM (nullTSet (tokNegJoinResults newTok)) $
     mapMM_ (leftActivateNegChild env newTok) (toListT (negChildren neg))
 
@@ -586,12 +586,36 @@ rightActivateNeg env neg wme =
       whenM (nullTSet (tokNegJoinResults tok)) $ deleteDescendentsOfTok env tok
 
       let jr = NegJoinResult tok wme
-      -- insert jr into tok.(neg)join-results
+      -- Insert jr into tok.(neg)join-results.
       modifyTVar' (tokNegJoinResults tok) (Set.insert jr)
-      -- insert jr into wme.neg-join-results
+      -- Insert jr into wme.neg-join-results.
       modifyTVar' (wmeNegJoinResults wme) (Set.insert jr)
 
--- U/L
+-- NCC
+
+leftActivateNcc :: Env -> Ncc -> Tok -> Wme -> STM ()
+leftActivateNcc env ncc tok wme = do
+  let partner = nccPartner ncc
+
+  newTok <- makeAndInsertTok env (ParentTok tok) (Just wme) (NccTokNode ncc)
+            (nccToks ncc)
+
+  -- Now we cut (clear) partner.buff and paste it into newTok.nccResults.
+  buff <- readTVar (partnerBuff partner)
+  writeTVar (partnerBuff   partner) Set.empty
+  writeTVar (tokNccResults newTok)  buff
+
+  -- For every result in buff result.owner = newTok
+  forM_ (toList buff) $ \result -> writeTVar (tokOwner result) $! Just newTok
+
+  when (Set.null buff) $
+    -- No ncc results so inform children.
+    mapMM_ (leftActivateNccChild env newTok) (toListT (nccChildren ncc))
+
+leftActivateNccChild :: Env -> Tok -> NccChild -> STM ()
+leftActivateNccChild = undefined
+
+-- U/L ABSTRACTION, RE-LINKING
 
 instance ToBool LeftUnlinked  where toBool (LeftUnlinked  b) = b
 instance ToBool RightUnlinked where toBool (RightUnlinked b) = b

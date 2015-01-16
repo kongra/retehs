@@ -268,6 +268,7 @@ instance Hashable WmeKey where
 
 data TokNode = BmemTokNode !Bmem
              | NegTokNode  !Neg
+             | NccTokNode  !Ncc
 
 -- | Parent token, may be either a Tok or a Dtt (Dummy Top Token).
 data ParentTok = ParentTok !Tok
@@ -461,7 +462,7 @@ data Ncc =
   , nccChildren :: !(TVar (Seq.Seq NccChild))
 
   , nccToks     :: !(TVar TokSet)
-  , nccParner   :: !Partner
+  , nccPartner  :: !Partner
   }
 
 instance HavingId Ncc where getId = nccId
