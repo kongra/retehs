@@ -24,7 +24,7 @@ import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Sequence as Seq
-import           Kask.Control.Monad (mapMM_, toListM, whenM)
+import           Kask.Control.Monad (mapMM_, forMM_, toListM, whenM)
 import           Kask.Data.Sequence (removeFirstOccurence)
 
 -- MISC. UTILS
@@ -231,6 +231,7 @@ internedSymbol env name = case symbolName name of
     OneCharConst   -> internedConstant env name
     MultiCharVar   -> internedVariable env name
     MultiCharConst -> internedConstant env name
+{-# INLINE internedSymbol #-}
 
 internedConstant :: Env -> String -> STM (Maybe Symbol)
 internedConstant Env { envConstants = consts } name = do
@@ -387,6 +388,7 @@ makeTok env parent wme node = do
     Nothing -> return () -- ... but only when wme is present.
 
   return tok
+{-# INLINE makeTok #-}
 
 -- | Creates a new Tok and adds it to the tokset (presumably in the node).
 makeAndInsertTok :: Env -> ParentTok -> Maybe Wme
@@ -437,6 +439,7 @@ passJoinTest wmes wme
     where
       wme2 = fromMaybe (error "PANIC (2): wmes !! d RETURNED Nothing.")
                        (wmes !! d)
+{-# INLINE passJoinTest #-}
 
 -- | Returns a value of a Field in Wme.
 fieldSymbol :: Field -> Wme -> Symbol
@@ -477,20 +480,20 @@ amemWmesForIndex k index =
 -- JOIN
 
 leftActivateJoin :: Env -> Join -> Tok -> STM ()
-leftActivateJoin env node tok = do
-  let amem = joinAmem node
+leftActivateJoin env join tok = do
+  let amem = joinAmem join
   isAmemEmpty <- nullTSet (amemWmes amem)
 
-  whenM (isRightUnlinked node) $ do -- When node.parent just became non-empty.
-    relinkToAmem node
-    when isAmemEmpty $ leftUnlink node (joinParent node)
+  whenM (isRightUnlinked join) $ do -- When join.parent just became non-empty.
+    relinkToAmem join
+    when isAmemEmpty $ leftUnlink join (joinParent join)
 
   unless isAmemEmpty $ do
-    children <- readTVar (joinChildren node)
+    children <- readTVar (joinChildren join)
     -- Only when we have children to activate ...
     unless (Seq.null children) $ do
       -- ... take matching Wmes from Amem indexes
-      wmes <- matchingAmemWmes (joinTests node) tok amem
+      wmes <- matchingAmemWmes (joinTests join) tok amem
       -- and iterate all wmes over all children left-activating:
       forM_ wmes $ \wme -> forM_ (toList children) $ \child ->
         leftActivateJoinChild env child tok wme
@@ -507,33 +510,86 @@ instance IsLeftUnlinked Join where
 instance LeftUnlink Join JoinParent where leftUnlink = undefined
 
 instance RightUnlink Join where
-  rightUnlink node amem = do
-    writeTVar (joinRightUnlinked node) $! RightUnlinked True
+  rightUnlink join amem = do
+    writeTVar (joinRightUnlinked join) $! RightUnlinked True
     modifyTVar' (amemSuccessors amem)
-      (removeFirstOccurence (JoinAmemSuccessor node))
+      (removeFirstOccurence (JoinAmemSuccessor join))
 
 rightActivateJoin :: Env -> Join -> Wme -> STM ()
-rightActivateJoin env node wme = do
-  let amem   = joinAmem   node
-      parent = joinParent node
+rightActivateJoin env join wme = do
+  let amem   = joinAmem   join
+      parent = joinParent join
 
   parentTokSet <- joinParentTokSet parent
   let isParentEmpty = Set.null parentTokSet
 
-  whenM (isLeftUnlinked node) $ do -- When node.amem just became non-empty.
-    relinkToParent node parent
-    when isParentEmpty (rightUnlink node amem)
+  whenM (isLeftUnlinked join) $ do -- When join.amem just became non-empty.
+    relinkToParent join
+    when isParentEmpty (rightUnlink join amem)
 
+  -- Only when parent has some Toks inside,
   unless isParentEmpty $ do
-    children <- readTVar (joinChildren node)
+    children <- readTVar (joinChildren join)
+    -- Only when there are some JoinChildren
     unless (Seq.null children) $
+      -- Iterate over parent.toks ...
       forM_ (Set.toList parentTokSet) $ \tok ->
-        when (performJoinTests (joinTests node) tok wme) $
+        when (performJoinTests (joinTests join) tok wme) $
+          -- ... and JoinChildren performing left activation.
           forM_ (toList children) $ \child ->
             leftActivateJoinChild env child tok wme
 
 joinParentTokSet :: JoinParent -> STM TokSet
 joinParentTokSet = undefined
+
+-- NEG
+
+leftActivateNeg :: Env -> Neg -> Tok -> Wme -> STM ()
+leftActivateNeg env neg tok wme = do
+  toks <- readTVar (negToks neg)
+  whenM (isRightUnlinked neg) $
+    -- The right-unlinking status above must be checked because a
+    -- negative node is not right unlinked on creation.
+    when (Set.null toks) $ relinkToAmem neg
+
+  -- Build a new token and store it just like a Bmem would.
+  newTok <- makeTok env (ParentTok tok) (Just wme) (NegTokNode neg)
+  writeTVar (negToks neg) (Set.insert newTok toks)
+
+  let amem = negAmem neg
+  isAmemEmpty <- nullTSet (amemWmes amem)
+
+  -- Compute the join results (using amem indexes)
+  unless isAmemEmpty $ do
+    wmes <- matchingAmemWmes (negTests neg) newTok amem
+    forM_ wmes $ \w -> do
+      let jr = NegJoinResult newTok w
+      modifyTVar' (tokNegJoinResults newTok) (Set.insert jr)
+      modifyTVar' (wmeNegJoinResults w)      (Set.insert jr)
+      -- In the original Doorenbos pseudo-code there was a bug - wme
+      -- was used instead of w in the 3 lines above.
+
+  -- If join results are empty, then inform children
+  whenM (nullTSet (tokNegJoinResults newTok)) $
+    mapMM_ (leftActivateNegChild env newTok) (toListT (negChildren neg))
+
+leftActivateNegChild :: Env -> Tok -> NegChild -> STM ()
+leftActivateNegChild = undefined
+
+instance IsRightUnlinked Neg where
+  isRightUnlinked neg = liftM toBool (readTVar (negRightUnlinked neg))
+
+rightActivateNeg :: Env -> Neg -> Wme -> STM ()
+rightActivateNeg env neg wme =
+  forMM_ (toListT (negToks neg)) $ \tok ->
+    when (performJoinTests (negTests neg) tok wme) $ do
+      whenM (nullTSet (tokNegJoinResults tok)) $ deleteDescendentsOfTok env tok
+
+      let jr = NegJoinResult tok wme
+      -- insert jr into tok.(neg)join-results
+      modifyTVar' (tokNegJoinResults tok) (Set.insert jr)
+      -- insert jr into wme.neg-join-results
+      modifyTVar' (wmeNegJoinResults wme) (Set.insert jr)
 
 -- U/L
 
@@ -548,5 +604,10 @@ class RightUnlink     a   where rightUnlink     :: a -> Amem -> STM ()
 relinkToAmem :: a -> STM ()
 relinkToAmem = undefined
 
-relinkToParent :: a -> p -> STM ()
+relinkToParent :: a -> STM ()
 relinkToParent = undefined
+
+-- DELETING TOKENS
+
+deleteDescendentsOfTok :: Env -> Tok -> STM ()
+deleteDescendentsOfTok = undefined

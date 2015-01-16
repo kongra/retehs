@@ -267,6 +267,7 @@ instance Hashable WmeKey where
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
 data TokNode = BmemTokNode !Bmem
+             | NegTokNode  !Neg
 
 -- | Parent token, may be either a Tok or a Dtt (Dummy Top Token).
 data ParentTok = ParentTok !Tok
@@ -276,6 +277,10 @@ data ParentTok = ParentTok !Tok
 data NegJoinResult =
   NegJoinResult { njrOwner :: !Tok
                 , njrWme   :: !Wme } deriving Eq
+
+instance Hashable NegJoinResult where
+  hashWithSalt salt (NegJoinResult owner wme) =
+    salt `hashWithSalt` owner `hashWithSalt` wme
 
 -- | Token.
 data Tok =
