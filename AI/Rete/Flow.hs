@@ -533,7 +533,7 @@ rightActivateJoin env join wme = do
     -- Only when there are some JoinChildren
     unless (Seq.null children) $
       -- Iterate over parent.toks ...
-      forM_ (Set.toList parentTokSet) $ \tok ->
+      forM_ (toList parentTokSet) $ \tok ->
         when (performJoinTests (joinTests join) tok wme) $
           -- ... and JoinChildren performing left activation.
           forM_ (toList children) $ \child ->
@@ -600,20 +600,53 @@ leftActivateNcc env ncc tok wme = do
   newTok <- makeAndInsertTok env (ParentTok tok) (Just wme) (NccTokNode ncc)
             (nccToks ncc)
 
-  -- Now we cut (clear) partner.buff and paste it into newTok.nccResults.
   buff <- readTVar (partnerBuff partner)
-  writeTVar (partnerBuff   partner) Set.empty
-  writeTVar (tokNccResults newTok)  buff
+  let isEmptyBuff = Set.null buff
 
-  -- For every result in buff result.owner = newTok
-  forM_ (toList buff) $ \result -> writeTVar (tokOwner result) $! Just newTok
+  unless isEmptyBuff $ do
+    -- Now we cut (clear) partner.buff and paste it into newTok.nccResults.
+    writeTVar (partnerBuff   partner) Set.empty
+    writeTVar (tokNccResults newTok)  buff
+    -- For every result in buff result.owner = newTok
+    forM_ (toList buff) $ \result -> writeTVar (tokOwner result) $! Just newTok
 
-  when (Set.null buff) $
+  when isEmptyBuff $
     -- No ncc results so inform children.
     mapMM_ (leftActivateNccChild env newTok) (toListT (nccChildren ncc))
 
 leftActivateNccChild :: Env -> Tok -> NccChild -> STM ()
 leftActivateNccChild = undefined
+
+-- (NCC) PARTNER
+
+leftActivatePartner :: Env -> Partner -> Tok -> Wme -> STM ()
+leftActivatePartner env partner tok wme = do
+  let ncc = partnerNcc partner
+  newResult <- makeTok env (ParentTok tok) (Just wme) (PartnerTokNode partner)
+
+  let (ownerParent, ownerWme) = findOwnersPair (partnerConjucts partner)
+                                               (ParentTok tok) (Just wme)
+
+  undefined
+
+-- | To find the appropriate owner token (into whose local memory we
+-- should put the result tok), we must first figure out what pair
+-- (ownersParent, ownersWme) would represent the owner. To do this we
+-- start with the argument pair and walk up the right number of links to
+-- find the pair that emerged from the join node for the condition
+-- preceding the Ncc partner.
+-- [Taken from the original Doorenbos thesis (with small changes)]
+findOwnersPair :: Int -> ParentTok -> Maybe Wme -> (ParentTok, Maybe Wme)
+findOwnersPair 0 parent wme = (parent, wme)
+findOwnersPair i parent _   = findOwnersPair (i-1) parent' wme
+  where
+    wme = case parent of
+      ParentTok t -> tokWme t
+      Dtt         -> error "PANIC (4): CAN'T ASK FOR dtt.wme."
+
+    parent' = case parent of
+      ParentTok t -> tokParent t
+      Dtt         -> error "PANIC (5): CAN'T ASK FOR dtt.parent."
 
 -- U/L ABSTRACTION, RE-LINKING
 

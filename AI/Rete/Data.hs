@@ -266,9 +266,10 @@ instance Hashable WmeKey where
   hashWithSalt salt (WmeKey obj attr val) =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
-data TokNode = BmemTokNode !Bmem
-             | NegTokNode  !Neg
-             | NccTokNode  !Ncc
+data TokNode = BmemTokNode    !Bmem
+             | NegTokNode     !Neg
+             | NccTokNode     !Ncc
+             | PartnerTokNode !Partner
 
 -- | Parent token, may be either a Tok or a Dtt (Dummy Top Token).
 data ParentTok = ParentTok !Tok
