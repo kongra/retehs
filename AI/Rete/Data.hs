@@ -271,6 +271,7 @@ data TokNode = BmemTokNode    !Bmem
              | NegTokNode     !Neg
              | NccTokNode     !Ncc
              | PartnerTokNode !Partner
+             | ProdTokNode    !Prod
 
 -- | Parent token, may be either a Tok or a Dtt (Dummy Top Token).
 data ParentTok = ParentTok !Tok

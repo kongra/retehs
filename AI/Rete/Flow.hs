@@ -400,13 +400,11 @@ makeAndInsertTok env parent wme node tokset = do
   return tok
 {-# INLINE makeAndInsertTok #-}
 
--- | Returns a sequence of (Maybe) Wmes for a Tok.
 tokWmes :: Tok -> [Maybe Wme]
-tokWmes tok = loop tok [tokWme tok]
+tokWmes = loop . ParentTok
   where
-    loop t wmes = case tokParent t of
-      Dtt         -> wmes
-      ParentTok p -> loop p (tokWme p : wmes)
+    loop (ParentTok tok) = tokWme tok : loop (tokParent tok)
+    loop Dtt             = []
 {-# INLINE tokWmes #-}
 
 -- BMEM
@@ -635,7 +633,7 @@ leftActivatePartner env partner tok wme = do
     Just owner' -> do
       -- Add newResult to owner's local memory and propagate further.
       modifyTVar' (tokNccResults owner') (Set.insert newResult)
-      writeTVar   (tokOwner newResult) $! owner
+      writeTVar   (tokOwner newResult) owner
       deleteDescendentsOfTok env owner'
 
     Nothing ->
@@ -667,6 +665,17 @@ findNccOwner :: Ncc -> ParentTok -> Maybe Wme -> STM (Maybe Tok)
 findNccOwner Ncc { nccToks = index } parent wme =
   liftM (Map.lookup (OwnerKey parent wme)) (readTVar index)
 {-# INLINE findNccOwner #-}
+
+-- PRODUCTION NODES:
+
+leftActivateProd :: Env -> Prod -> Tok -> STM ()
+leftActivateProd env prod tok = do
+  newTok <- makeAndInsertTok env (ParentTok tok) Nothing (ProdTokNode prod)
+            (prodToks prod)
+
+  -- Fire action
+  let action = prodAction prod
+  action (Actx env prod newTok (tokWmes newTok))
 
 -- U/L ABSTRACTION, RE-LINKING
 
