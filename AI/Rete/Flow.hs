@@ -597,8 +597,11 @@ leftActivateNcc :: Env -> Ncc -> Tok -> Wme -> STM ()
 leftActivateNcc env ncc tok wme = do
   let partner = nccPartner ncc
 
-  newTok <- makeAndInsertTok env (ParentTok tok) (Just wme) (NccTokNode ncc)
-            (nccToks ncc)
+  -- Create a new token and add it to the nccToks index under a proper
+  -- OwnerKey.
+  newTok      <- makeTok env (ParentTok tok) (Just wme) (NccTokNode ncc)
+  let ownerKey = OwnerKey    (ParentTok tok) (Just wme)
+  modifyTVar' (nccToks ncc) (Map.insert ownerKey newTok)
 
   buff <- readTVar (partnerBuff partner)
   let isEmptyBuff = Set.null buff
@@ -624,10 +627,22 @@ leftActivatePartner env partner tok wme = do
   let ncc = partnerNcc partner
   newResult <- makeTok env (ParentTok tok) (Just wme) (PartnerTokNode partner)
 
-  let (ownerParent, ownerWme) = findOwnersPair (partnerConjucts partner)
-                                               (ParentTok tok) (Just wme)
+  let n = partnerConjucts partner
+      (ownerParent, ownerWme) = findOwnersPair n (ParentTok tok) (Just wme)
+  owner <- findNccOwner ncc ownerParent ownerWme
 
-  undefined
+  case owner of
+    Just owner' -> do
+      -- Add newResult to owner's local memory and propagate further.
+      modifyTVar' (tokNccResults owner') (Set.insert newResult)
+      writeTVar   (tokOwner newResult) $! owner
+      deleteDescendentsOfTok env owner'
+
+    Nothing ->
+      -- We didn't find an appropriate owner token already in the Ncc
+      -- node's memory, so we just stuff the result in our temporary
+      -- buffer.
+      modifyTVar' (partnerBuff partner) (Set.insert newResult)
 
 -- | To find the appropriate owner token (into whose local memory we
 -- should put the result tok), we must first figure out what pair
@@ -642,11 +657,16 @@ findOwnersPair i parent _   = findOwnersPair (i-1) parent' wme
   where
     wme = case parent of
       ParentTok t -> tokWme t
-      Dtt         -> error "PANIC (4): CAN'T ASK FOR dtt.wme."
+      Dtt         -> error "PANIC (4): ASKING FOR dtt.wme IS DISALLOWED."
 
     parent' = case parent of
       ParentTok t -> tokParent t
-      Dtt         -> error "PANIC (5): CAN'T ASK FOR dtt.parent."
+      Dtt         -> error "PANIC (5): ASKING FOR dtt.parent IS DISALLOWED."
+
+findNccOwner :: Ncc -> ParentTok -> Maybe Wme -> STM (Maybe Tok)
+findNccOwner Ncc { nccToks = index } parent wme =
+  liftM (Map.lookup (OwnerKey parent wme)) (readTVar index)
+{-# INLINE findNccOwner #-}
 
 -- U/L ABSTRACTION, RE-LINKING
 

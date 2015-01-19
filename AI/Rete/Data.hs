@@ -78,6 +78,7 @@ module AI.Rete.Data
     , Ncc                 (..)
     , NccParent           (..)
     , NccChild            (..)
+    , OwnerKey            (..)
 
     , Partner             (..)
     , PartnerParent       (..)
@@ -274,6 +275,11 @@ data TokNode = BmemTokNode    !Bmem
 -- | Parent token, may be either a Tok or a Dtt (Dummy Top Token).
 data ParentTok = ParentTok !Tok
                | Dtt
+               deriving Eq
+
+instance Hashable ParentTok where
+  hashWithSalt salt Dtt             = salt `hashWithSalt` ((-1) :: Id)
+  hashWithSalt salt (ParentTok tok) = salt `hashWithSalt` tok
 
 -- | Negative join result.
 data NegJoinResult =
@@ -462,12 +468,19 @@ data Ncc =
   , nccParent   :: !NccParent
   , nccChildren :: !(TVar (Seq.Seq NccChild))
 
-  , nccToks     :: !(TVar TokSet)
+  , nccToks      :: !(TVar (Map.HashMap OwnerKey Tok))
   , nccPartner  :: !Partner
   }
 
 instance HavingId Ncc where getId = nccId
 instance Eq       Ncc where (==)  = eqOnId
+
+-- | Key in nccToks index.
+data OwnerKey = OwnerKey !ParentTok !(Maybe Wme) deriving Eq
+
+instance Hashable OwnerKey where
+  hashWithSalt salt (OwnerKey parent wme) =
+    salt `hashWithSalt` parent `hashWithSalt` wme
 
 -- | Parent node of a Partner node.
 data PartnerParent = PartnerParent
