@@ -556,27 +556,37 @@ instance Show S where
   show (Sym s) = show s
 
 -- | The condition of a production.
-data Cond =
-  -- Positive conds
-    PosStr  !String !String  !String
-  | PosS    !S      !S       !S
-  | PosCond !Obj    !Attr    !Val -- canonical form
-
-  -- Neg conds
-  | NegStr  !String !String  !String
-  | NegS    !S      !S       !S
-  | NegCond !Obj    !Attr    !Val -- canonical form
-
-  -- Nccs
-  | NccCond ![Cond]
+data Cond = PosCond !Obj !Attr !Val
+          | NegCond !Obj !Attr !Val
+          | NccCond [Cond]
 
 instance Show Cond where
-  show (PosStr  o a v) =         show o ++ " " ++ show a ++ " " ++ show v
-  show (PosS    o a v) =         show o ++ " " ++ show a ++ " " ++ show v
   show (PosCond o a v) =         show o ++ " " ++ show a ++ " " ++ show v
-
-  show (NegStr  o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
-  show (NegS    o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
-
   show (NccCond conds) = "¬ " ++ show conds
+
+-- -- | The condition of a production.
+-- data Cond =
+--   -- Positive conds
+--     PosStr  !String !String  !String
+--   | PosS    !S      !S       !S
+--   | PosCond !Obj    !Attr    !Val -- canonical form
+
+--   -- Neg conds
+--   | NegStr  !String !String  !String
+--   | NegS    !S      !S       !S
+--   | NegCond !Obj    !Attr    !Val -- canonical form
+
+--   -- Nccs
+--   | NccCond ![Cond]
+
+-- instance Show Cond where
+--   show (PosStr  o a v) =         show o ++ " " ++ show a ++ " " ++ show v
+--   show (PosS    o a v) =         show o ++ " " ++ show a ++ " " ++ show v
+--   show (PosCond o a v) =         show o ++ " " ++ show a ++ " " ++ show v
+
+--   show (NegStr  o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+--   show (NegS    o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+--   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+
+--   show (NccCond conds) = "¬ " ++ show conds

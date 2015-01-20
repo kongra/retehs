@@ -19,9 +19,11 @@ import           Control.Monad (forM_)
 import           Data.Foldable (toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
--- import           Data.Hashable (Hashable)
--- import           Data.Maybe (fromMaybe)
+import           Data.List (sortBy)
+import           Data.Maybe (isJust, fromJust)
 import qualified Data.Sequence as Seq
+import           Safe (headMay)
+-- import           Data.Hashable (Hashable)
 -- import           Kask.Control.Monad (mapMM_, forMM_, toListM, whenM)
 -- import           Kask.Data.Sequence (removeFirstOccurence)
 
@@ -161,3 +163,96 @@ instance AddChild Bmem where
 
 updateWithMatchesFromAbove :: Env -> a -> STM ()
 updateWithMatchesFromAbove = undefined
+
+-- PROCESSING CONDS
+
+-- | It is desirable for the Conds of a production to be sorted in
+-- such a way that the positive conds come before the negative and the
+-- ncc conds. Also the subconditions of a ncc should be sorted in such
+-- way. The following procedure does the job.
+sortConds :: [Cond] -> [Cond]
+sortConds = map processCond . sortBy (flip condsOrdering)
+  where
+    processCond c = case c of
+      (NccCond subconds) -> NccCond (sortConds subconds)
+      _                  -> c
+{-# INLINE sortConds #-}
+
+condsOrdering :: Cond -> Cond -> Ordering
+condsOrdering PosCond {} PosCond {} = EQ
+condsOrdering PosCond {} _          = GT
+
+condsOrdering NegCond {} PosCond {} = LT
+condsOrdering NegCond {} NegCond {} = EQ
+condsOrdering NegCond {} NccCond {} = GT
+
+condsOrdering NccCond {} PosCond {} = LT
+condsOrdering NccCond {} NegCond {} = LT
+condsOrdering NccCond {} NccCond {} = EQ
+{-# INLINE condsOrdering #-}
+
+-- JOIN TESTS
+
+-- | Returns a field within the PosCond that is equal to the passed
+-- Symbol.
+fieldEqualTo :: Cond -> Symbol -> Maybe Field
+fieldEqualTo (PosCond obj attr val) s
+  | obj  == Obj  s = Just O
+  | attr == Attr s = Just A
+  | val  == Val  s = Just V
+  | otherwise      = Nothing
+fieldEqualTo _ _  = error "PANIC (8): ONLY PosConds ALLOWED HERE."
+{-# INLINE fieldEqualTo #-}
+
+type IndexedCond  = (Cond, Distance)
+data IndexedField = IndexedField !Field !Distance
+
+indexedPositiveConds :: [Cond] -> [IndexedCond]
+indexedPositiveConds conds =
+  filter positive (zip (reverse conds) [0 ..])
+  where
+    positive (PosCond {}, _) = True
+    positive _               = False
+{-# INLINE indexedPositiveConds #-}
+
+indexedField :: Symbol -> IndexedCond -> Maybe IndexedField
+indexedField s (cond, d) = case fieldEqualTo cond s of
+  Nothing -> Nothing
+  Just f  -> Just (IndexedField f d)
+
+joinTestFromField :: Symbol -> Field -> [IndexedCond] -> Maybe JoinTest
+joinTestFromField v field earlierConds
+  | isVariable v =
+    case headMay (matches earlierConds) of
+      Nothing                 -> Nothing
+      -- Indices are 0-based. When creating a JoinTest we must
+      -- increase it to maintain a required 1-based indexing.
+      Just (IndexedField f d) -> Just (JoinTest field f (d+1))
+
+  | otherwise = Nothing -- No tests from Consts (non-Vars).
+  where
+    matches = map fromJust . filter isJust . map (indexedField v)
+{-# INLINE joinTestFromField #-}
+
+-- | Extracts and returns join tests for the given condition.
+joinTestsFromCond :: Cond -> [Cond] -> [JoinTest]
+joinTestsFromCond (PosCond obj attr val) earlierConds =
+  joinTestsFromCondImpl obj attr val earlierConds
+joinTestsFromCond (NegCond obj attr val) earlierConds =
+  joinTestsFromCondImpl obj attr val earlierConds
+joinTestsFromCond cond@_ _ =
+  error ("PANIC (9): ONLY PosCond OR NegCond ALLOWED HERE, GIVEN " ++ show cond)
+{-# INLINE joinTestsFromCond #-}
+
+joinTestsFromCondImpl :: Obj -> Attr -> Val -> [Cond] -> [JoinTest]
+joinTestsFromCondImpl (Obj obj) (Attr attr) (Val val) earlierConds = result3
+  where
+    econds  = indexedPositiveConds earlierConds
+    test1   = joinTestFromField    obj  O econds
+    test2   = joinTestFromField    attr A econds
+    test3   = joinTestFromField    val  V econds
+
+    result1 = [fromJust test3 | isJust test3]
+    result2 = if isJust test2 then fromJust test2 : result1 else result1
+    result3 = if isJust test1 then fromJust test1 : result2 else result2
+{-# INLINE joinTestsFromCondImpl #-}
