@@ -362,7 +362,9 @@ instance Hashable Amem where
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
 -- | Parent (node) of a Bmem.
-data BmemParent = BmemParent
+data BmemParent = JoinBmemParent !Join
+                | NegBmemParent  !Neg
+                | NccBmemParent  !Ncc
 
 -- | Child (node) of a Bmem.
 data BmemChild  = BmemChild
@@ -399,7 +401,7 @@ data JoinTest =
 data JoinParent = JoinParent
 
 -- | Child node of a Join node.
-data JoinChild = JoinChild
+data JoinChild = BmemJoinChild !Bmem
 
 -- | Nearest ancestor of a Join node having the same Amem.
 data JoinNearestAncestor = JoinNearestAncestor
@@ -432,7 +434,7 @@ instance Eq       Join where (==)  = eqOnId
 data NegParent = NegParent
 
 -- | Child node of a Neg node.
-data NegChild = NegChild
+data NegChild = BmemNegChild !Bmem
 
 -- | Nearest ancestor of a Neg node having the same Amem.
 data NegNearestAncestor = NegNearestAncestor
@@ -459,7 +461,7 @@ instance Eq       Neg where (==)  = eqOnId
 data NccParent = NccParent
 
 -- | Child node of a Ncc node.
-data NccChild = NccChild
+data NccChild = BmemNccChild !Bmem
 
 -- | Ncc node.
 data Ncc =

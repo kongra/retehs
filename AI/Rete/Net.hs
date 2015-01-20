@@ -36,9 +36,10 @@ isVariable (Const _) = False
 -- creates a new one.
 buildOrShareAmem :: Env -> Symbol -> Symbol -> Symbol -> STM Amem
 buildOrShareAmem env obj attr val = do
-  let obj'  = if isVariable obj  then Obj  (Const wildcardConstant) else Obj  obj
-      attr' = if isVariable attr then Attr (Const wildcardConstant) else Attr attr
-      val'  = if isVariable obj  then Val  (Const wildcardConstant) else Val  val
+  let w     = Const wildcardConstant
+      obj'  = Obj  $ if isVariable obj  then w else obj
+      attr' = Attr $ if isVariable attr then w else attr
+      val'  = Val  $ if isVariable val  then w else val
 
   amems <- readTVar (envAmems env)
   let k = WmeKey obj' attr' val'
@@ -88,7 +89,7 @@ activateAmemOnCreation env amem obj attr val = do
                            wmesMatchingByVal
 
   -- Put all matching wmes into the amem.
-  writeTVar (amemWmes amem) $!  wmesMatching
+  writeTVar (amemWmes amem) wmesMatching
 
   -- Iteratively work on every wme.
   forM_ (toList wmesMatching) $ \wme -> do
@@ -100,3 +101,63 @@ activateAmemOnCreation env amem obj attr val = do
     modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
     modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
 {-# INLINE activateAmemOnCreation #-}
+
+-- ABSTRACTION FOR NETWORK CONSTRUCTION
+
+-- | A generic node used as intermediate data-structure during the
+-- network creation.
+data ReteNode = ReteDtn
+              | ReteJoin !Join
+              | ReteNeg  !Neg
+              | ReteNcc  !Ncc
+
+class AddChild a where addChild :: ReteNode -> a -> STM ()
+
+toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
+toTSeqFront s = modifyTVar' s . (Seq.<|)
+{-# INLINE toTSeqFront #-}
+
+-- BMEM CREATION
+
+buildOrShareBmem :: Env -> ReteNode -> STM Bmem
+buildOrShareBmem env parent = do
+  sharedBem <- findChildBmem parent
+  case sharedBem of
+    Just bmem -> return bmem
+    Nothing   -> do
+      -- Create new Bmem.
+      id'         <- genid env
+      children    <- newTVar Seq.empty
+      allChildren <- newTVar Seq.empty
+      toks        <- newTVar Set.empty
+
+      let bmem = Bmem { bmemId          = id'
+                      , bmemParent      = bmemParentOf parent
+                      , bmemChildren    = children
+                      , bmemAllChildren = allChildren
+                      , bmemToks        = toks }
+
+      addChild                   parent bmem
+      updateWithMatchesFromAbove env    bmem
+      return bmem
+
+findChildBmem :: ReteNode -> STM (Maybe Bmem)
+findChildBmem = undefined
+
+bmemParentOf :: ReteNode -> BmemParent
+bmemParentOf (ReteJoin join) = JoinBmemParent join
+bmemParentOf (ReteNeg  neg)  = NegBmemParent  neg
+bmemParentOf (ReteNcc  ncc)  = NccBmemParent  ncc
+bmemParentOf ReteDtn         = error "PANIC (6): Dtn MUST NOT BE A Bmem PARENT."
+{-# INLINE bmemParentOf #-}
+
+instance AddChild Bmem where
+  addChild (ReteJoin join) = toTSeqFront (joinChildren join) . BmemJoinChild
+  addChild (ReteNeg  neg)  = toTSeqFront (negChildren  neg)  . BmemNegChild
+  addChild (ReteNcc  ncc)  = toTSeqFront (nccChildren  ncc)  . BmemNccChild
+  addChild ReteDtn         = error "PANIC (7): Bmem MUST NOT BE A Dtn CHILD."
+
+-- UPDATING NEW NODES WITH MATCHES FROM ABOVE
+
+updateWithMatchesFromAbove :: Env -> a -> STM ()
+updateWithMatchesFromAbove = undefined
