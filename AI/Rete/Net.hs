@@ -119,6 +119,28 @@ toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
 toTSeqFront s = modifyTVar' s . (Seq.<|)
 {-# INLINE toTSeqFront #-}
 
+-- | A generic representation of a parent node.
+data ParentNode = ParentDtn
+                | ParentBmem !Bmem
+                | ParentJoin !Join
+                | ParentNeg  !Neg
+                | ParentNcc  !Ncc
+
+class WithParentNode a where parentNode :: a -> Maybe ParentNode
+
+instance WithParentNode ParentNode where
+  parentNode ParentDtn         = Nothing
+  parentNode (ParentBmem bmem) = parentNode bmem
+  parentNode (ParentJoin join) = parentNode join
+  parentNode (ParentNeg  neg)  = parentNode neg
+  parentNode (ParentNcc  ncc)  = parentNode ncc
+
+instance WithParentNode Bmem    where parentNode = undefined
+instance WithParentNode Join    where parentNode = undefined
+instance WithParentNode Neg     where parentNode = undefined
+instance WithParentNode Ncc     where parentNode = undefined
+instance WithParentNode Partner where parentNode = undefined
+
 -- BMEM CREATION
 
 buildOrShareBmem :: Env -> ReteNode -> STM Bmem
@@ -158,11 +180,6 @@ instance AddChild Bmem where
   addChild (ReteNeg  neg)  = toTSeqFront (negChildren  neg)  . BmemNegChild
   addChild (ReteNcc  ncc)  = toTSeqFront (nccChildren  ncc)  . BmemNccChild
   addChild ReteDtn         = error "PANIC (7): Bmem MUST NOT BE A Dtn CHILD."
-
--- UPDATING NEW NODES WITH MATCHES FROM ABOVE
-
-updateWithMatchesFromAbove :: Env -> a -> STM ()
-updateWithMatchesFromAbove = undefined
 
 -- PROCESSING CONDS
 
@@ -225,7 +242,7 @@ joinTestFromField v field earlierConds
   | isVariable v =
     case headMay (matches earlierConds) of
       Nothing                 -> Nothing
-      -- Indices are 0-based. When creating a JoinTest we must
+      -- Indices are 0-based. When creating a JoinTest we have to
       -- increase it to maintain a required 1-based indexing.
       Just (IndexedField f d) -> Just (JoinTest field f (d+1))
 
@@ -256,3 +273,36 @@ joinTestsFromCondImpl (Obj obj) (Attr attr) (Val val) earlierConds = result3
     result2 = if isJust test2 then fromJust test2 : result1 else result1
     result3 = if isJust test1 then fromJust test1 : result2 else result2
 {-# INLINE joinTestsFromCondImpl #-}
+
+-- NEAREST ANCESTOR WITH THE SAME Amem.
+
+data NodeWithAmem = JoinWithAmem !Join
+                  | NegWithAmem  !Neg
+
+-- | Returns the nearest ancestor with the passed Amem.
+nearestAncestor :: Maybe ParentNode -> Amem -> Maybe NodeWithAmem
+nearestAncestor Nothing       _    = Nothing
+nearestAncestor (Just parent) amem = case parent of
+  ParentJoin join
+    -> if joinAmem join == amem
+       then Just $! JoinWithAmem join
+       else nearestAncestor (parentNode parent) amem
+
+  ParentNeg neg
+    -> if negAmem neg == amem
+       then Just $! NegWithAmem neg
+       else nearestAncestor (parentNode parent) amem
+
+  ParentNcc ncc
+    -> nearestAncestor (parentNode (nccPartner ncc)) amem
+
+  _ -> nearestAncestor (parentNode parent) amem
+
+-- JOIN CREATION
+
+
+
+-- UPDATING NEW NODES WITH MATCHES FROM ABOVE
+
+updateWithMatchesFromAbove :: Env -> a -> STM ()
+updateWithMatchesFromAbove = undefined

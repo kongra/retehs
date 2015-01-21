@@ -421,7 +421,7 @@ data Join =
   , joinChildren       :: !(TVar (Seq.Seq JoinChild))
 
   , joinAmem           :: !Amem
-  , joinNearesAncestor :: !JoinNearestAncestor
+  , joinNearestAncestor :: !JoinNearestAncestor
   , joinTests          :: ![JoinTest]
   , joinLeftUnlinked   :: !(TVar LeftUnlinked)
   , joinRightUnlinked  :: !(TVar RightUnlinked)
