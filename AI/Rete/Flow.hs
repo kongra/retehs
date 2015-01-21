@@ -39,7 +39,9 @@ toListT :: Foldable f => TVar (f a) -> STM [a] -- TSeq a -> STM [a]
 toListT = toListM . readTVar
 {-# INLINE toListT #-}
 
-class ToBool a where toBool :: a -> Bool
+-- | Conversion between misc. types.
+class Conv a b where
+  conv :: a -> b
 
 -- WMES INDEXES MANIPULATION
 
@@ -68,16 +70,42 @@ wmesIndexDelete k wme index =
 -- | Creates and returns a new, empty Env.
 createEnv :: STM Env
 createEnv = do
-  idState    <- newTVar 0
-  constants  <- newTVar Map.empty
-  variables  <- newTVar Map.empty
-  wmes       <- newTVar Map.empty
-  wmesByObj  <- newTVar Map.empty
-  wmesByAttr <- newTVar Map.empty
-  wmesByVal  <- newTVar Map.empty
-  amems      <- newTVar Map.empty
-  prods      <- newTVar Set.empty
+  -- Dummies.
+  dttChildren   <- newTVar Set.empty
+  dttNjResults  <- newTVar Set.empty
+  dttNccResults <- newTVar Set.empty
+  dttOwner      <- newTVar Nothing
 
+  theDtnJoins  <- newTVar Map.empty
+  theDtnNegs   <- newTVar Map.empty
+  theDtnNccs   <- newTVar Map.empty
+
+  let dtn = Dtn { dtnTok            = dtt
+                , dtnJoins          = theDtnJoins
+                , dtnNegs           = theDtnNegs
+                , dtnNccs           = theDtnNccs }
+
+      dtt = Tok { tokId             = -1
+                , tokParent         = Nothing
+                , tokWme            = Nothing
+                , tokNode           = DtnTokNode dtn
+                , tokChildren       = dttChildren
+                , tokNegJoinResults = dttNjResults
+                , tokNccResults     = dttNccResults
+                , tokOwner          = dttOwner}
+
+  -- Env components.
+  idState      <- newTVar 0
+  constants    <- newTVar Map.empty
+  variables    <- newTVar Map.empty
+  wmes         <- newTVar Map.empty
+  wmesByObj    <- newTVar Map.empty
+  wmesByAttr   <- newTVar Map.empty
+  wmesByVal    <- newTVar Map.empty
+  amems        <- newTVar Map.empty
+  prods        <- newTVar Set.empty
+
+  -- Let's create Env.
   return Env { envIdState    = idState
              , envConstants  = constants
              , envVariables  = variables
@@ -86,7 +114,8 @@ createEnv = do
              , envWmesByAttr = wmesByAttr
              , envWmesByVal  = wmesByVal
              , envAmems      = amems
-             , envProds      = prods }
+             , envProds      = prods
+             , envDtn        = dtn }
 
 feedEnvIndexes :: Env -> Wme -> STM ()
 feedEnvIndexes
@@ -359,8 +388,8 @@ feedAmems env wme o a v = do
 
 -- | Creates a new Tok. It DOES NOT add it to the node (see
 -- makeAndInsertTok).
-makeTok :: Env -> ParentTok -> Maybe Wme -> TokNode -> STM Tok
-makeTok env parent wme node = do
+makeTok :: Env -> Tok -> Maybe Wme -> TokNode -> STM Tok
+makeTok env parentTok wme node = do
   id'        <- genid   env
   children   <- newTVar Set.empty
   njResults  <- newTVar Set.empty
@@ -368,7 +397,7 @@ makeTok env parent wme node = do
   owner      <- newTVar Nothing
 
   let tok = Tok { tokId             = id'
-                , tokParent         = parent
+                , tokParent         = Just parentTok
                 , tokWme            = wme
                 , tokNode           = node
                 , tokChildren       = children
@@ -377,10 +406,7 @@ makeTok env parent wme node = do
                 , tokOwner          = owner}
 
   -- Add tok to parent.children (for tree-based removal) ...
-  case parent of
-    ParentTok p -> modifyTVar' (tokChildren p) (Set.insert tok)
-    Dtt         -> return () -- ... but only unless Dtt (a rhetorical figure
-                             --     that is never deleted).
+  modifyTVar' (tokChildren parentTok) (Set.insert tok)
 
   -- Add tok to wme.tokens (for tree-based-removal) ...
   case wme of
@@ -391,31 +417,30 @@ makeTok env parent wme node = do
 {-# INLINE makeTok #-}
 
 -- | Creates a new Tok and adds it to the tokset (presumably in the node).
-makeAndInsertTok :: Env -> ParentTok -> Maybe Wme
-                 -> TokNode -> TVar TokSet
-                 -> STM Tok
-makeAndInsertTok env parent wme node tokset = do
-  tok <- makeTok env parent wme node
+makeAndInsertTok :: Env -> Tok -> Maybe Wme
+                 -> TokNode -> TVar TokSet -> STM Tok
+makeAndInsertTok env parentTok wme node tokset = do
+  tok <- makeTok env parentTok wme node
   modifyTVar' tokset (Set.insert tok)
   return tok
 {-# INLINE makeAndInsertTok #-}
 
 tokWmes :: Tok -> [Maybe Wme]
-tokWmes = loop . ParentTok
+tokWmes = loop . Just
   where
-    loop (ParentTok tok) = tokWme tok : loop (tokParent tok)
-    loop Dtt             = []
+    loop (Just tok) = tokWme tok : loop (tokParent tok)
+    loop Nothing    = []
 {-# INLINE tokWmes #-}
 
 -- BMEM
 
 -- | Performs left-activation of a Bmem.
-leftActivateBmem :: Env -> Bmem -> ParentTok -> Wme -> STM ()
-leftActivateBmem env bmem parent wme = do
-  tok <- makeAndInsertTok env parent (Just wme) (BmemTokNode bmem)
-         (bmemToks bmem)
+leftActivateBmem :: Env -> Bmem -> Tok -> Wme -> STM ()
+leftActivateBmem env bmem tok wme = do
+  newTok <- makeAndInsertTok env tok (Just wme) (BmemTokNode bmem)
+            (bmemToks bmem)
 
-  mapMM_ (rightActivateBmemChild env tok) (toListT (bmemChildren bmem))
+  mapMM_ (rightActivateBmemChild env newTok) (toListT (bmemChildren bmem))
 {-# INLINE leftActivateBmem #-}
 
 rightActivateBmemChild :: Env -> Tok -> BmemChild -> STM ()
@@ -500,10 +525,10 @@ leftActivateJoinChild :: Env -> JoinChild -> Tok -> Wme -> STM ()
 leftActivateJoinChild = undefined
 
 instance IsRightUnlinked Join where
-  isRightUnlinked join = liftM toBool (readTVar (joinRightUnlinked join))
+  isRightUnlinked join = liftM conv (readTVar (joinRightUnlinked join))
 
 instance IsLeftUnlinked Join where
-  isLeftUnlinked join = liftM toBool (readTVar (joinLeftUnlinked join))
+  isLeftUnlinked join = liftM conv (readTVar (joinLeftUnlinked join))
 
 instance LeftUnlink Join JoinParent where leftUnlink = undefined
 
@@ -551,7 +576,7 @@ leftActivateNeg env neg tok wme = do
     when (Set.null toks) $ relinkToAmem neg
 
   -- Build a new token and store it just like a Bmem would.
-  newTok <- makeTok env (ParentTok tok) (Just wme) (NegTokNode neg)
+  newTok <- makeTok env tok (Just wme) (NegTokNode neg)
   writeTVar (negToks neg) (Set.insert newTok toks)
 
   let amem = negAmem neg
@@ -575,7 +600,7 @@ leftActivateNegChild :: Env -> Tok -> NegChild -> STM ()
 leftActivateNegChild = undefined
 
 instance IsRightUnlinked Neg where
-  isRightUnlinked neg = liftM toBool (readTVar (negRightUnlinked neg))
+  isRightUnlinked neg = liftM conv (readTVar (negRightUnlinked neg))
 
 rightActivateNeg :: Env -> Neg -> Wme -> STM ()
 rightActivateNeg env neg wme =
@@ -597,8 +622,8 @@ leftActivateNcc env ncc tok wme = do
 
   -- Create a new token and add it to the nccToks index under a proper
   -- OwnerKey.
-  newTok      <- makeTok env (ParentTok tok) (Just wme) (NccTokNode ncc)
-  let ownerKey = OwnerKey    (ParentTok tok) (Just wme)
+  newTok <- makeTok env tok (Just wme) (NccTokNode ncc)
+  let ownerKey = OwnerKey tok (Just wme)
   modifyTVar' (nccToks ncc) (Map.insert ownerKey newTok)
 
   buff <- readTVar (partnerBuff partner)
@@ -608,7 +633,7 @@ leftActivateNcc env ncc tok wme = do
     -- Now we cut (clear) partner.buff and paste it into newTok.nccResults.
     writeTVar (partnerBuff   partner) Set.empty
     writeTVar (tokNccResults newTok)  buff
-    -- For every result in buff result.owner = newTok
+    -- For every result in buff result.owner = newTok.
     forM_ (toList buff) $ \result -> writeTVar (tokOwner result) $! Just newTok
 
   when isEmptyBuff $
@@ -623,10 +648,10 @@ leftActivateNccChild = undefined
 leftActivatePartner :: Env -> Partner -> Tok -> Wme -> STM ()
 leftActivatePartner env partner tok wme = do
   let ncc = partnerNcc partner
-  newResult <- makeTok env (ParentTok tok) (Just wme) (PartnerTokNode partner)
+  newResult <- makeTok env tok (Just wme) (PartnerTokNode partner)
 
   let n = partnerConjucts partner
-      (ownerParent, ownerWme) = findOwnersPair n (ParentTok tok) (Just wme)
+      (ownerParent, ownerWme) = findOwnersPair n tok (Just wme)
   owner <- findNccOwner ncc ownerParent ownerWme
 
   case owner of
@@ -649,28 +674,24 @@ leftActivatePartner env partner tok wme = do
 -- find the pair that emerged from the join node for the condition
 -- preceding the Ncc partner.
 -- [Taken from the original Doorenbos thesis (with small changes)]
-findOwnersPair :: Int -> ParentTok -> Maybe Wme -> (ParentTok, Maybe Wme)
-findOwnersPair 0 parent wme = (parent, wme)
-findOwnersPair i parent _   = findOwnersPair (i-1) parent' wme
+findOwnersPair :: Int -> Tok -> Maybe Wme -> (Tok, Maybe Wme)
+findOwnersPair 0 parentTok wme = (parentTok, wme)
+findOwnersPair i parentTok _   = findOwnersPair (i-1) parentTok' wme
   where
-    wme = case parent of
-      ParentTok t -> tokWme t
-      Dtt         -> error "PANIC (4): ASKING FOR dtt.wme IS DISALLOWED."
+    wme        = tokWme parentTok
+    parentTok' = fromMaybe (error "PANIC (4): NO WAY TO ASK FOR PARENT.")
+                 (tokParent parentTok)
 
-    parent' = case parent of
-      ParentTok t -> tokParent t
-      Dtt         -> error "PANIC (5): ASKING FOR dtt.parent IS DISALLOWED."
-
-findNccOwner :: Ncc -> ParentTok -> Maybe Wme -> STM (Maybe Tok)
-findNccOwner Ncc { nccToks = index } parent wme =
-  liftM (Map.lookup (OwnerKey parent wme)) (readTVar index)
+findNccOwner :: Ncc -> Tok -> Maybe Wme -> STM (Maybe Tok)
+findNccOwner Ncc { nccToks = index } parentTok wme =
+  liftM (Map.lookup (OwnerKey parentTok wme)) (readTVar index)
 {-# INLINE findNccOwner #-}
 
 -- PRODUCTION NODES:
 
 leftActivateProd :: Env -> Prod -> Tok -> STM ()
 leftActivateProd env prod tok = do
-  newTok <- makeAndInsertTok env (ParentTok tok) Nothing (ProdTokNode prod)
+  newTok <- makeAndInsertTok env tok Nothing (ProdTokNode prod)
             (prodToks prod)
 
   -- Fire action
@@ -679,8 +700,8 @@ leftActivateProd env prod tok = do
 
 -- U/L ABSTRACTION, RE-LINKING
 
-instance ToBool LeftUnlinked  where toBool (LeftUnlinked  b) = b
-instance ToBool RightUnlinked where toBool (RightUnlinked b) = b
+instance Conv LeftUnlinked  Bool where conv (LeftUnlinked  b) = b
+instance Conv RightUnlinked Bool where conv (RightUnlinked b) = b
 
 class IsLeftUnlinked  a   where isLeftUnlinked  :: a -> STM Bool
 class IsRightUnlinked a   where isRightUnlinked :: a -> STM Bool

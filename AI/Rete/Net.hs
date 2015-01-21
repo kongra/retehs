@@ -108,7 +108,7 @@ activateAmemOnCreation env amem obj attr val = do
 
 -- | A generic node used as intermediate data-structure during the
 -- network creation.
-data ReteNode = ReteDtn
+data ReteNode = ReteDtn  !Dtn
               | ReteJoin !Join
               | ReteNeg  !Neg
               | ReteNcc  !Ncc
@@ -120,7 +120,7 @@ toTSeqFront s = modifyTVar' s . (Seq.<|)
 {-# INLINE toTSeqFront #-}
 
 -- | A generic representation of a parent node.
-data ParentNode = ParentDtn
+data ParentNode = ParentDtn  !Dtn
                 | ParentBmem !Bmem
                 | ParentJoin !Join
                 | ParentNeg  !Neg
@@ -129,7 +129,7 @@ data ParentNode = ParentDtn
 class WithParentNode a where parentNode :: a -> Maybe ParentNode
 
 instance WithParentNode ParentNode where
-  parentNode ParentDtn         = Nothing
+  parentNode (ParentDtn  _   ) = Nothing
   parentNode (ParentBmem bmem) = parentNode bmem
   parentNode (ParentJoin join) = parentNode join
   parentNode (ParentNeg  neg)  = parentNode neg
@@ -172,14 +172,14 @@ bmemParentOf :: ReteNode -> BmemParent
 bmemParentOf (ReteJoin join) = JoinBmemParent join
 bmemParentOf (ReteNeg  neg)  = NegBmemParent  neg
 bmemParentOf (ReteNcc  ncc)  = NccBmemParent  ncc
-bmemParentOf ReteDtn         = error "PANIC (6): Dtn MUST NOT BE A Bmem PARENT."
+bmemParentOf (ReteDtn  _  )  = error "PANIC (6): Dtn MUST NOT BE A Bmem PARENT."
 {-# INLINE bmemParentOf #-}
 
 instance AddChild Bmem where
   addChild (ReteJoin join) = toTSeqFront (joinChildren join) . BmemJoinChild
   addChild (ReteNeg  neg)  = toTSeqFront (negChildren  neg)  . BmemNegChild
   addChild (ReteNcc  ncc)  = toTSeqFront (nccChildren  ncc)  . BmemNccChild
-  addChild ReteDtn         = error "PANIC (7): Bmem MUST NOT BE A Dtn CHILD."
+  addChild (ReteDtn  _  )  = error "PANIC (7): Bmem MUST NOT BE A Dtn CHILD."
 
 -- PROCESSING CONDS
 
@@ -299,6 +299,52 @@ nearestAncestor (Just parent) amem = case parent of
   _ -> nearestAncestor (parentNode parent) amem
 
 -- JOIN CREATION
+
+-- buildOrShareJoinNode :: Env -> Node -> Amem -> [JoinTest] -> STM Node
+-- buildOrShareJoinNode env parent amem tests = do
+
+--   undefined
+
+  -- -- parent is always a β-memory, so below it's safe
+  -- allParentChildren <- rvprop bmemAllChildren parent
+  -- let matchingOneOf = headMay
+  --                     . filter (isShareableJoinNode amem tests)
+  --                     . Set.toList
+  -- case matchingOneOf allParentChildren of
+  --   Just node -> return node
+  --   Nothing   -> do
+  --     -- Establish the unlinking stuff ...
+  --     unlinkRight <- nullTSet (vprop nodeToks parent)
+  --     ru          <- newTVar unlinkRight
+  --     -- ... unlinking left only if the right ul. was not applied.
+  --     unlinkLeft'    <- nullTSet (amemWmes amem)
+  --     let unlinkLeft = not unlinkRight && unlinkLeft'
+  --     lu             <- newTVar unlinkLeft
+
+  --     -- Create new node with JoinNode variant
+  --     let ancestor = findNearestAncestorWithSameAmem parent amem
+  --     node <- newNode env parent
+  --             JoinNode { nodeAmem                    = amem
+  --                      , nearestAncestorWithSameAmem = ancestor
+  --                      , joinTests                   = tests
+  --                      , leftUnlinked                = lu
+  --                      , rightUnlinked               = ru }
+
+  --     -- Add node to parent.allChildren
+  --     writeTVar (vprop bmemAllChildren parent) $!
+  --       Set.insert node allParentChildren
+
+  --     -- Increment amem.reference-count
+  --     modifyTVar' (amemReferenceCount amem) (+1)
+
+  --     unless unlinkRight $
+  --       -- Insert node at the head of amem.successors
+  --       modifyTVar' (amemSuccessors amem) (node Seq.<|)
+
+  --     unless unlinkLeft $
+  --       -- Add node (to the head) of parent.children
+  --       modifyTVar' (nodeChildren parent) (node Seq.<|)
+
 
 
 

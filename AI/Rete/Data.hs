@@ -45,7 +45,6 @@ module AI.Rete.Data
       -- * Tokens
     , Tok                 (..)
     , TokNode             (..)
-    , ParentTok           (..)
     , TokSet
 
       -- Negative join results
@@ -55,6 +54,9 @@ module AI.Rete.Data
       -- α memory
     , Amem                (..)
     , AmemSuccessor       (..)
+
+      -- Dummy Top Node
+    , Dtn                 (..)
 
       -- β memory
     , Bmem                (..)
@@ -186,7 +188,7 @@ data Env =
     -- | Registry of (interned) Variables.
   , envVariables:: !(TVar (Map.HashMap String Variable))
 
-    -- | All Wmes indexed by their WmeKey
+    -- | All Wmes indexed by their WmeKey.
   , envWmes :: !(TVar (Map.HashMap WmeKey Wme))
 
     -- 3 Wme indexes by Wme Field value
@@ -194,11 +196,14 @@ data Env =
   , envWmesByAttr :: !(TVar WmesByAttr)
   , envWmesByVal  :: !(TVar WmesByVal)
 
-    -- | Known alpha memories indexed by their WmeKey
+    -- | Known alpha memories indexed by their WmeKey.
   , envAmems :: !(TVar (Map.HashMap WmeKey Amem))
 
-    -- | Productions the Env knows about
+    -- | Productions the Env knows about.
   , envProds :: !(TVar (Set.HashSet Prod))
+
+    -- | Dummy Top Node.
+  , envDtn :: !Dtn
   }
 
 -- | Object (Constant or Variable).
@@ -267,20 +272,12 @@ instance Hashable WmeKey where
   hashWithSalt salt (WmeKey obj attr val) =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
-data TokNode = BmemTokNode    !Bmem
+data TokNode = DtnTokNode     !Dtn
+             | BmemTokNode    !Bmem
              | NegTokNode     !Neg
              | NccTokNode     !Ncc
              | PartnerTokNode !Partner
              | ProdTokNode    !Prod
-
--- | Parent token, may be either a Tok or a Dtt (Dummy Top Token).
-data ParentTok = ParentTok !Tok
-               | Dtt
-               deriving Eq
-
-instance Hashable ParentTok where
-  hashWithSalt salt Dtt             = salt `hashWithSalt` ((-1) :: Id)
-  hashWithSalt salt (ParentTok tok) = salt `hashWithSalt` tok
 
 -- | Negative join result.
 data NegJoinResult =
@@ -298,8 +295,8 @@ data Tok =
     -- | Identifier of the token.
     tokId :: !Id
 
-    -- | Points to a 'higher' token.
-  , tokParent :: !ParentTok
+    -- | Points to a 'higher' token. Nothing for Dtt.
+  , tokParent :: !(Maybe Tok)
 
     -- | Wme of this Tok, Nothing for some toks.
   , tokWme :: !(Maybe Wme)
@@ -361,6 +358,20 @@ instance Hashable Amem where
   hashWithSalt salt Amem { amemObj = obj, amemAttr = attr, amemVal = val } =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
+-- | A singleton (within Env) Dummy Top Node.
+data Dtn =
+  Dtn
+  {
+    dtnTok :: !Tok -- ^ Dummy Top Token
+
+    -- Indices below store Dtn children in a way usable during network
+    -- construction. Ordering does not matter cause none of the
+    -- children gets ever activated by Dtn.
+  , dtnJoins :: !(TVar (Map.HashMap Amem          Join))
+  , dtnNegs  :: !(TVar (Map.HashMap Amem          Neg))
+  , dtnNccs  :: !(TVar (Map.HashMap PartnerParent Ncc))
+  }
+
 -- | Parent (node) of a Bmem.
 data BmemParent = JoinBmemParent !Join
                 | NegBmemParent  !Neg
@@ -398,7 +409,7 @@ data JoinTest =
   deriving Eq
 
 -- | Parent node of a Join node.
-data JoinParent = JoinParent
+data JoinParent = BmemJoinParent !Bmem | DtnJoinParent !Dtn
 
 -- | Child node of a Join node.
 data JoinChild = BmemJoinChild !Bmem
@@ -479,7 +490,7 @@ instance HavingId Ncc where getId = nccId
 instance Eq       Ncc where (==)  = eqOnId
 
 -- | Key in nccToks index.
-data OwnerKey = OwnerKey !ParentTok !(Maybe Wme) deriving Eq
+data OwnerKey = OwnerKey !Tok !(Maybe Wme) deriving Eq
 
 instance Hashable OwnerKey where
   hashWithSalt salt (OwnerKey parent wme) =
@@ -564,29 +575,3 @@ instance Show Cond where
   show (PosCond o a v) =         show o ++ " " ++ show a ++ " " ++ show v
   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
   show (NccCond conds) = "¬ " ++ show conds
-
--- -- | The condition of a production.
--- data Cond =
---   -- Positive conds
---     PosStr  !String !String  !String
---   | PosS    !S      !S       !S
---   | PosCond !Obj    !Attr    !Val -- canonical form
-
---   -- Neg conds
---   | NegStr  !String !String  !String
---   | NegS    !S      !S       !S
---   | NegCond !Obj    !Attr    !Val -- canonical form
-
---   -- Nccs
---   | NccCond ![Cond]
-
--- instance Show Cond where
---   show (PosStr  o a v) =         show o ++ " " ++ show a ++ " " ++ show v
---   show (PosS    o a v) =         show o ++ " " ++ show a ++ " " ++ show v
---   show (PosCond o a v) =         show o ++ " " ++ show a ++ " " ++ show v
-
---   show (NegStr  o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
---   show (NegS    o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
---   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
-
---   show (NccCond conds) = "¬ " ++ show conds
