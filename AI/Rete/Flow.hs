@@ -25,7 +25,8 @@ import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (forMM_, toListM, whenM)
-import           Kask.Data.Sequence (removeFirstOccurence)
+import           Kask.Data.Sequence (removeFirstOccurence,
+                                     insertBeforeFirstOccurence)
 
 -- MISC. UTILS
 
@@ -39,9 +40,16 @@ toListT :: Foldable f => TVar (f a) -> STM [a] -- TSeq a -> STM [a]
 toListT = toListM . readTVar
 {-# INLINE toListT #-}
 
--- | Conversion between misc. types.
-class Conv a b where
-  conv :: a -> b
+toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
+toTSeqFront s = modifyTVar' s . (Seq.<|)
+{-# INLINE toTSeqFront #-}
+
+toTSeqEnd :: TVar (Seq.Seq a) -> a -> STM ()
+toTSeqEnd s x = modifyTVar' s (Seq.|> x)
+{-# INLINE toTSeqEnd #-}
+
+-- | Casting to Bool values
+class ToBool a where toBool :: a -> Bool
 
 -- WMES INDEXES MANIPULATION
 
@@ -197,10 +205,6 @@ instance InternSymbol Symbol where
   -- we would have to intern the argument's name.
   internSymbol _ = return
 
-instance InternSymbol S where
-  internSymbol env (S   s) = internSymbol env s
-  internSymbol env (Sym s) = internSymbol env s
-
 instance InternSymbol String where
   internSymbol env name = case symbolName name of
     EmptyConst     -> return (Const emptyConstant)
@@ -300,47 +304,35 @@ activateAmem env amem wme = do
 
 -- WMES
 
-class AddWme a where
-  -- | Adds the fact represented by the Wme fields into the working
-  -- memory and propagates the change downwards the Rete network. Returns
-  -- the corresponding Wme. If the fact was already present, nothing
-  -- happens, and Nothing is being returned.
-  addWme :: Env -> a -> a -> a -> STM (Maybe Wme)
-
--- | Works like addWme inside an action (of a production).
-addWmeA :: AddWme a => Actx -> a -> a -> a -> STM (Maybe Wme)
-addWmeA actx = addWme (actxEnv actx)
-{-# INLINE addWmeA #-}
-
-instance AddWme String where addWme = addWmeInterningFields
-instance AddWme S      where addWme = addWmeInterningFields
-
-addWmeInterningFields :: InternSymbol a => Env -> a -> a -> a -> STM (Maybe Wme)
-addWmeInterningFields env obj attr val = do
+addWme :: (InternSymbol a, InternSymbol b, InternSymbol c) =>
+          Env -> a -> b -> c -> STM (Maybe Wme)
+addWme env obj attr val = do
   obj'  <- internSymbol env obj
   attr' <- internSymbol env attr
   val'  <- internSymbol env val
-  addWme env obj' attr' val'
-{-# INLINE addWmeInterningFields #-}
 
-instance AddWme Symbol where
-  addWme env obj attr val = do
-    let k = WmeKey (Obj obj) (Attr attr) (Val val)
-    wmes <- readTVar (envWmes env)
-    if Map.member k wmes
-      then return Nothing -- Already present, do nothing.
-      else do
-        wme <- createWme env (Obj obj) (Attr attr) (Val val)
+  let k = WmeKey (Obj obj') (Attr attr') (Val val')
+  wmes <- readTVar (envWmes env)
+  if Map.member k wmes
+    then return Nothing -- Already present, do nothing.
+    else do
+      wme <- createWme env (Obj obj') (Attr attr') (Val val')
 
-        -- Add wme to envWmes under k.
-        writeTVar (envWmes env) $! Map.insert k wme wmes
+      -- Add wme to envWmes under k.
+      writeTVar (envWmes env) $! Map.insert k wme wmes
 
-        -- Add wme to env indexes (including wildcard key).
-        feedEnvIndexes env wme
+      -- Add wme to env indexes (including wildcard key).
+      feedEnvIndexes env wme
 
-        -- Propagate wme into amems and return.
-        feedAmems env wme (Obj obj) (Attr attr) (Val val)
-        return (Just wme)
+      -- Propagate wme into amems and return.
+      feedAmems env wme (Obj obj') (Attr attr') (Val val')
+      return (Just wme)
+
+-- | Works like addWme inside an action (of a production).
+addWmeA :: (InternSymbol a, InternSymbol b, InternSymbol c) =>
+           Actx -> a -> b -> c -> STM (Maybe Wme)
+addWmeA actx = addWme (actxEnv actx)
+{-# INLINE addWmeA #-}
 
 -- | Creates an empty Wme.
 createWme :: Env -> Obj -> Attr -> Val -> STM Wme
@@ -516,8 +508,9 @@ leftActivateJoin env join tok = do
   let amem = joinAmem join
   isAmemEmpty <- nullTSet (amemWmes amem)
 
-  whenM (isRightUnlinked join) $ do -- When join.parent just became non-empty.
-    relinkToAmem join
+  -- When join.parent just became non-empty.
+  whenM (isRightUnlinked (JoinAmemSuccessor join)) $ do
+    relinkToAmem (JoinAmemSuccessor join)
     when isAmemEmpty $ leftUnlink join (joinParent join)
 
   unless isAmemEmpty $ do
@@ -530,20 +523,6 @@ leftActivateJoin env join tok = do
       forM_ wmes $ \wme -> forM_ (toList children) $ \child ->
         leftActivateCondChild env child tok (Just wme)
 
-instance IsRightUnlinked Join where
-  isRightUnlinked join = liftM conv (readTVar (joinRightUnlinked join))
-
-instance IsLeftUnlinked Join where
-  isLeftUnlinked join = liftM conv (readTVar (joinLeftUnlinked join))
-
-instance LeftUnlink Join JoinParent where leftUnlink = undefined
-
-instance RightUnlink Join where
-  rightUnlink join amem = do
-    writeTVar (joinRightUnlinked join) $! RightUnlinked True
-    modifyTVar' (amemSuccessors amem)
-      (removeFirstOccurence (JoinAmemSuccessor join))
-
 rightActivateJoin :: Env -> Join -> Wme -> STM ()
 rightActivateJoin env join wme = do
   let amem   = joinAmem   join
@@ -553,13 +532,13 @@ rightActivateJoin env join wme = do
   let isParentEmpty = Set.null parentTokSet
 
   whenM (isLeftUnlinked join) $ do -- When join.amem just became non-empty.
-    relinkToParent join
-    when isParentEmpty (rightUnlink join amem)
+    relinkToParent join parent
+    when isParentEmpty (rightUnlink (JoinAmemSuccessor join) amem)
 
   -- Only when parent has some Toks inside,
   unless isParentEmpty $ do
     children <- readTVar (joinChildren join)
-    -- Only when there are some JoinChildren
+    -- Only when there are some children...
     unless (Seq.null children) $
       -- Iterate over parent.toks ...
       forM_ (toList parentTokSet) $ \tok ->
@@ -569,8 +548,9 @@ rightActivateJoin env join wme = do
             leftActivateCondChild env child tok (Just wme)
 
 joinParentTokSet :: JoinParent -> STM TokSet
-joinParentTokSet (DtnJoinParent  _)                        = return Set.empty
-joinParentTokSet (BmemJoinParent Bmem { bmemToks = toks }) = readTVar toks
+joinParentTokSet parent = case parent of
+  DtnJoinParent  {}                       -> return Set.empty
+  BmemJoinParent Bmem { bmemToks = toks } -> readTVar toks
 {-# INLINE joinParentTokSet #-}
 
 -- NEG
@@ -578,10 +558,10 @@ joinParentTokSet (BmemJoinParent Bmem { bmemToks = toks }) = readTVar toks
 leftActivateNeg :: Env -> Neg -> Tok -> Maybe Wme -> STM ()
 leftActivateNeg env neg tok wme = do
   toks <- readTVar (negToks neg)
-  whenM (isRightUnlinked neg) $
+  whenM (isRightUnlinked (NegAmemSuccessor neg)) $
     -- The right-unlinking status above must be checked because a
     -- negative node is not right unlinked on creation.
-    when (Set.null toks) $ relinkToAmem neg
+    when (Set.null toks) $ relinkToAmem (NegAmemSuccessor neg)
 
   -- Build a new token and store it just like a Bmem would.
   newTok <- makeTok env tok wme (NegTokNode neg)
@@ -605,14 +585,12 @@ leftActivateNeg env neg tok wme = do
     forMM_ (toListT (negChildren neg)) $ \child ->
       leftActivateCondChild env child newTok Nothing
 
-instance IsRightUnlinked Neg where
-  isRightUnlinked neg = liftM conv (readTVar (negRightUnlinked neg))
-
 rightActivateNeg :: Env -> Neg -> Wme -> STM ()
 rightActivateNeg env neg wme =
   forMM_ (toListT (negToks neg)) $ \tok ->
     when (performJoinTests (negTests neg) tok wme) $ do
-      whenM (nullTSet (tokNegJoinResults tok)) $ deleteDescendentsOfTok env tok
+      whenM (nullTSet (tokNegJoinResults tok)) $
+        deleteDescendentsOfTok env tok
 
       let jr = NegJoinResult tok wme
       -- Insert jr into tok.(neg)join-results.
@@ -700,21 +678,97 @@ leftActivateProd env prod tok wme = do
   let action = prodAction prod
   action (Actx env prod newTok (tokWmes newTok))
 
--- U/L ABSTRACTION, RE-LINKING
+-- LEFT U/L (Joins ONLY)
 
-instance Conv LeftUnlinked  Bool where conv (LeftUnlinked  b) = b
-instance Conv RightUnlinked Bool where conv (RightUnlinked b) = b
+instance ToBool LeftUnlinked  where toBool (LeftUnlinked  b) = b
+instance ToBool RightUnlinked where toBool (RightUnlinked b) = b
 
-class IsLeftUnlinked  a   where isLeftUnlinked  :: a -> STM Bool
-class IsRightUnlinked a   where isRightUnlinked :: a -> STM Bool
-class LeftUnlink      a p where leftUnlink      :: a -> p -> STM ()
-class RightUnlink     a   where rightUnlink     :: a -> Amem -> STM ()
+isLeftUnlinked :: Join -> STM Bool
+isLeftUnlinked join = liftM toBool (readTVar (joinLeftUnlinked join))
+{-# INLINE isLeftUnlinked #-}
 
-relinkToAmem :: a -> STM ()
-relinkToAmem = undefined
+leftUnlink :: Join -> JoinParent -> STM ()
+leftUnlink join parent = do
+  case parent of
+    BmemJoinParent bmem -> modifyTVar' (bmemChildren bmem)
+                           (removeFirstOccurence join)
 
-relinkToParent :: a -> STM ()
-relinkToParent = undefined
+    -- Dtn doesn't hold any live references to nodes, other than
+    -- indices, used during network construction (like
+    -- bmemAllChildren in Bmem). Thus we do nothing here.
+    DtnJoinParent  _ -> return ()
+
+  writeTVar (joinLeftUnlinked join) (LeftUnlinked True)
+{-# INLINE leftUnlink #-}
+
+relinkToParent :: Join -> JoinParent -> STM ()
+relinkToParent join parent = do
+  case parent of
+    BmemJoinParent bmem -> toTSeqFront (bmemChildren bmem) join
+    DtnJoinParent  _    -> return () -- As in leftUnlink.
+
+  writeTVar (joinLeftUnlinked join) (LeftUnlinked False)
+{-# INLINE relinkToParent #-}
+
+-- RIGHT U/L (Joins AND Negs - AmemSuccessors)
+
+isRightUnlinked :: AmemSuccessor -> STM Bool
+isRightUnlinked node = liftM toBool (readTVar (rightUnlinkedTVar node))
+{-# INLINE isRightUnlinked #-}
+
+rightUnlink :: AmemSuccessor -> Amem -> STM ()
+rightUnlink node amem = do
+  modifyTVar' (amemSuccessors    amem) (removeFirstOccurence node)
+  writeTVar   (rightUnlinkedTVar node) (RightUnlinked True)
+{-# INLINE rightUnlink #-}
+
+relinkToAmem :: AmemSuccessor -> STM ()
+relinkToAmem node = do
+  let amem = successorAmem node
+  ancestorLookup <- relinkAncestor node
+  case ancestorLookup of
+    Just ancestor ->
+      -- insert node into node.amem.successors immediately before
+      -- ancestor
+      modifyTVar' (amemSuccessors amem)
+        (node `insertBeforeFirstOccurence` ancestor)
+
+    -- insert node at the tail of node.amem.successors
+    Nothing -> toTSeqEnd (amemSuccessors amem) node
+
+  writeTVar (rightUnlinkedTVar node) (RightUnlinked False)
+{-# INLINE relinkToAmem #-}
+
+-- | The goal of this loop is to find the nearest right linked
+-- ancestor with the same Amem.
+relinkAncestor :: AmemSuccessor -> STM (Maybe AmemSuccessor)
+relinkAncestor node = do
+  let possibleAncestor = nearestAncestor node
+  case possibleAncestor of
+    Nothing       -> return Nothing
+    Just ancestor -> do
+      rightUnlinked' <- isRightUnlinked ancestor
+      if rightUnlinked'
+        then relinkAncestor ancestor
+        else return possibleAncestor
+
+successorProp :: (Join -> a) -> (Neg -> a) -> AmemSuccessor -> a
+successorProp f1 f2 node = case node of
+    JoinAmemSuccessor join -> f1 join
+    NegAmemSuccessor  neg  -> f2 neg
+{-# INLINE successorProp #-}
+
+rightUnlinkedTVar :: AmemSuccessor -> TVar RightUnlinked
+rightUnlinkedTVar  = successorProp joinRightUnlinked negRightUnlinked
+{-# INLINE rightUnlinkedTVar #-}
+
+nearestAncestor :: AmemSuccessor -> Maybe AmemSuccessor
+nearestAncestor = successorProp joinNearestAncestor negNearestAncestor
+{-# INLINE nearestAncestor #-}
+
+successorAmem :: AmemSuccessor -> Amem
+successorAmem = successorProp joinAmem negAmem
+{-# INLINE successorAmem #-}
 
 -- DELETING TOKENS
 

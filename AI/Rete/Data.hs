@@ -9,86 +9,7 @@
 -- Maintainer  : kongra@gmail.com
 -- Stability   : experimental
 ------------------------------------------------------------------------
-module AI.Rete.Data
-    (
-      -- * Identity
-      Id
-    , HavingId
-    , getId
-    , eqOnId
-    , hashWithId
-
-      -- * Symbolic data
-    , Constant            (..)
-    , Variable            (..)
-    , Symbol              (..)
-    , S                   (..)
-
-      -- * Environment
-    , Env                 (..)
-
-      -- * Working Memory Elements
-    , Wme                 (..)
-    , WmeKey              (..)
-    , WmeSet
-    , WmesIndex
-    , WmesByObj
-    , WmesByAttr
-    , WmesByVal
-
-      -- * Fields and their values
-    , Obj                 (..)
-    , Attr                (..)
-    , Val                 (..)
-    , Field               (..)
-
-      -- * Tokens
-    , Tok                 (..)
-    , TokNode             (..)
-    , TokSet
-
-      -- * Negative join results
-    , NegJoinResult       (..)
-    , NegJoinResultSet
-
-      -- * Alpha memory
-    , Amem                (..)
-
-      -- * Particular nodes
-    , Dtn                 (..)
-    , Bmem                (..)
-    , Join                (..)
-    , JoinParent          (..)
-    , JoinTest            (..)
-    , Neg                 (..)
-    , Ncc                 (..)
-    , OwnerKey            (..)
-    , Partner             (..)
-    , Prod                (..)
-
-      -- * Generalized nodes
-    , AmemSuccessor       (..)
-    , CondNode            (..)
-    , CondNodeWithDtn     (..)
-    , CondChild           (..)
-
-      -- * U/L
-    , RightUnlinked       (..)
-    , LeftUnlinked        (..)
-
-      -- * "Spatial" data
-    , Distance
-    , Location            (..)
-
-      -- * Actions, variable bindings
-    , Action
-    , Actx                (..)
-    , Bindings
-
-      -- * Conditions
-    , Cond                (..)
-    )
-    where
+module AI.Rete.Data where
 
 import           Control.Concurrent.STM (STM, TVar)
 import qualified Data.HashMap.Strict as Map
@@ -154,17 +75,9 @@ instance Eq Symbol where
 
 instance Hashable Symbol where hashWithSalt = hashWithId
 
--- | The user-friendly representation of symbols.
-data S = S   !String
-       | Sym !Symbol
-
-instance Show S where
-  show (S   s) = s
-  show (Sym s) = show s
-
 -- ENVIRONMENT
 
--- | Environment. Contains a global context for the running algorithm.
+-- | Environment. Contains a global context for running algorithm.
 data Env =
   Env
   {
@@ -444,7 +357,7 @@ data Join =
   , joinChildren        :: !(TVar (Seq.Seq CondChild))
 
   , joinAmem            :: !Amem
-  , joinNearestAncestor :: !AmemSuccessor
+  , joinNearestAncestor :: !(Maybe AmemSuccessor)
   , joinTests           :: ![JoinTest]
   , joinLeftUnlinked    :: !(TVar LeftUnlinked)
   , joinRightUnlinked   :: !(TVar RightUnlinked)
@@ -464,7 +377,7 @@ data Neg =
   , negToks            :: !(TVar TokSet)
   , negAmem            :: !Amem
   , negTests           :: ![JoinTest]
-  , negNearestAncestor :: !AmemSuccessor
+  , negNearestAncestor :: !(Maybe AmemSuccessor)
   , negRightUnlinked   :: !(TVar RightUnlinked)
   }
 

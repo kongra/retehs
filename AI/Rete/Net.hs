@@ -19,10 +19,10 @@ import           Control.Monad (forM_)
 import           Data.Foldable (toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
-import           Data.List (sortBy)
-import           Data.Maybe (isJust, fromJust)
+-- import           Data.List (sortBy)
+-- import           Data.Maybe (isJust, fromJust)
 import qualified Data.Sequence as Seq
-import           Safe (headMay)
+-- import           Safe (headMay)
 -- import           Data.Hashable (Hashable)
 -- import           Kask.Control.Monad (mapMM_, forMM_, toListM, whenM)
 -- import           Kask.Data.Sequence (removeFirstOccurence)
@@ -106,18 +106,7 @@ activateAmemOnCreation env amem obj attr val = do
 
 -- -- ABSTRACTION FOR NETWORK CONSTRUCTION
 
--- -- | A generic node used as intermediate data-structure during the
--- -- network creation.
--- data ReteNode = ReteDtn  !Dtn
---               | ReteJoin !Join
---               | ReteNeg  !Neg
---               | ReteNcc  !Ncc
-
 -- class AddChild a where addChild :: ReteNode -> a -> STM ()
-
--- toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
--- toTSeqFront s = modifyTVar' s . (Seq.<|)
--- {-# INLINE toTSeqFront #-}
 
 -- -- | A generic representation of a parent node.
 -- data ParentNode = ParentDtn  !Dtn
