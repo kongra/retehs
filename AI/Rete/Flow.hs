@@ -24,7 +24,7 @@ import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe)
 import qualified Data.Sequence as Seq
-import           Kask.Control.Monad (mapMM_, forMM_, toListM, whenM)
+import           Kask.Control.Monad (forMM_, toListM, whenM)
 import           Kask.Data.Sequence (removeFirstOccurence)
 
 -- MISC. UTILS
@@ -293,10 +293,10 @@ activateAmem env amem wme = do
   modifyTVar' (wmeAmems wme) (amem:)
 
   -- Activate amem successors.
-  mapMM_ (rightActivateAmemSuccessor env wme) (toListT (amemSuccessors amem))
-
-rightActivateAmemSuccessor :: Env -> Wme -> AmemSuccessor -> STM ()
-rightActivateAmemSuccessor = undefined
+  forMM_ (toListT (amemSuccessors amem)) $ \s ->
+    case s of
+      JoinAmemSuccessor join -> rightActivateJoin env join wme
+      NegAmemSuccessor  neg  -> rightActivateNeg  env neg  wme
 
 -- WMES
 
@@ -432,19 +432,28 @@ tokWmes = loop . Just
     loop Nothing    = []
 {-# INLINE tokWmes #-}
 
+-- GENERALIZED NODES
+
+leftActivateCondChild :: Env -> CondChild -> Tok -> Maybe Wme -> STM ()
+leftActivateCondChild env child = case child of
+  BmemCondChild    bmem    -> leftActivateBmem    env bmem
+  NegCondChild     neg     -> leftActivateNeg     env neg
+  NccCondChild     ncc     -> leftActivateNcc     env ncc
+  PartnerCondChild partner -> leftActivatePartner env partner
+  ProdCondChild    prod    -> leftActivateProd    env prod
+{-# INLINE leftActivateCondChild #-}
+
 -- BMEM
 
 -- | Performs left-activation of a Bmem.
-leftActivateBmem :: Env -> Bmem -> Tok -> Wme -> STM ()
+leftActivateBmem :: Env -> Bmem -> Tok -> Maybe Wme -> STM ()
 leftActivateBmem env bmem tok wme = do
-  newTok <- makeAndInsertTok env tok (Just wme) (BmemTokNode bmem)
+  newTok <- makeAndInsertTok env tok wme (BmemTokNode bmem)
             (bmemToks bmem)
 
-  mapMM_ (rightActivateBmemChild env newTok) (toListT (bmemChildren bmem))
+  forMM_ (toListT (bmemChildren bmem)) $ \join ->
+    leftActivateJoin env join newTok
 {-# INLINE leftActivateBmem #-}
-
-rightActivateBmemChild :: Env -> Tok -> BmemChild -> STM ()
-rightActivateBmemChild = undefined
 
 -- UNINDEXED JOIN
 
@@ -519,10 +528,7 @@ leftActivateJoin env join tok = do
       wmes <- matchingAmemWmes (joinTests join) tok amem
       -- and iterate all wmes over all children left-activating:
       forM_ wmes $ \wme -> forM_ (toList children) $ \child ->
-        leftActivateJoinChild env child tok wme
-
-leftActivateJoinChild :: Env -> JoinChild -> Tok -> Wme -> STM ()
-leftActivateJoinChild = undefined
+        leftActivateCondChild env child tok (Just wme)
 
 instance IsRightUnlinked Join where
   isRightUnlinked join = liftM conv (readTVar (joinRightUnlinked join))
@@ -560,14 +566,16 @@ rightActivateJoin env join wme = do
         when (performJoinTests (joinTests join) tok wme) $
           -- ... and JoinChildren performing left activation.
           forM_ (toList children) $ \child ->
-            leftActivateJoinChild env child tok wme
+            leftActivateCondChild env child tok (Just wme)
 
 joinParentTokSet :: JoinParent -> STM TokSet
-joinParentTokSet = undefined
+joinParentTokSet (DtnJoinParent  _)                        = return Set.empty
+joinParentTokSet (BmemJoinParent Bmem { bmemToks = toks }) = readTVar toks
+{-# INLINE joinParentTokSet #-}
 
 -- NEG
 
-leftActivateNeg :: Env -> Neg -> Tok -> Wme -> STM ()
+leftActivateNeg :: Env -> Neg -> Tok -> Maybe Wme -> STM ()
 leftActivateNeg env neg tok wme = do
   toks <- readTVar (negToks neg)
   whenM (isRightUnlinked neg) $
@@ -576,7 +584,7 @@ leftActivateNeg env neg tok wme = do
     when (Set.null toks) $ relinkToAmem neg
 
   -- Build a new token and store it just like a Bmem would.
-  newTok <- makeTok env tok (Just wme) (NegTokNode neg)
+  newTok <- makeTok env tok wme (NegTokNode neg)
   writeTVar (negToks neg) (Set.insert newTok toks)
 
   let amem = negAmem neg
@@ -594,10 +602,8 @@ leftActivateNeg env neg tok wme = do
 
   -- If join results are empty, then inform children.
   whenM (nullTSet (tokNegJoinResults newTok)) $
-    mapMM_ (leftActivateNegChild env newTok) (toListT (negChildren neg))
-
-leftActivateNegChild :: Env -> Tok -> NegChild -> STM ()
-leftActivateNegChild = undefined
+    forMM_ (toListT (negChildren neg)) $ \child ->
+      leftActivateCondChild env child newTok Nothing
 
 instance IsRightUnlinked Neg where
   isRightUnlinked neg = liftM conv (readTVar (negRightUnlinked neg))
@@ -616,14 +622,14 @@ rightActivateNeg env neg wme =
 
 -- NCC
 
-leftActivateNcc :: Env -> Ncc -> Tok -> Wme -> STM ()
+leftActivateNcc :: Env -> Ncc -> Tok -> Maybe Wme -> STM ()
 leftActivateNcc env ncc tok wme = do
   let partner = nccPartner ncc
 
   -- Create a new token and add it to the nccToks index under a proper
   -- OwnerKey.
-  newTok <- makeTok env tok (Just wme) (NccTokNode ncc)
-  let ownerKey = OwnerKey tok (Just wme)
+  newTok <- makeTok env tok wme (NccTokNode ncc)
+  let ownerKey = OwnerKey tok wme
   modifyTVar' (nccToks ncc) (Map.insert ownerKey newTok)
 
   buff <- readTVar (partnerBuff partner)
@@ -637,21 +643,18 @@ leftActivateNcc env ncc tok wme = do
     forM_ (toList buff) $ \result -> writeTVar (tokOwner result) $! Just newTok
 
   when isEmptyBuff $
-    -- No ncc results so inform children.
-    mapMM_ (leftActivateNccChild env newTok) (toListT (nccChildren ncc))
-
-leftActivateNccChild :: Env -> Tok -> NccChild -> STM ()
-leftActivateNccChild = undefined
+    forMM_ (toListT (nccChildren ncc)) $ \child ->
+      leftActivateCondChild env child newTok Nothing
 
 -- (NCC) PARTNER
 
-leftActivatePartner :: Env -> Partner -> Tok -> Wme -> STM ()
+leftActivatePartner :: Env -> Partner -> Tok -> Maybe Wme -> STM ()
 leftActivatePartner env partner tok wme = do
   let ncc = partnerNcc partner
-  newResult <- makeTok env tok (Just wme) (PartnerTokNode partner)
+  newResult <- makeTok env tok wme (PartnerTokNode partner)
 
   let n = partnerConjucts partner
-      (ownerParent, ownerWme) = findOwnersPair n tok (Just wme)
+      (ownerParent, ownerWme) = findOwnersPair n tok wme
   owner <- findNccOwner ncc ownerParent ownerWme
 
   case owner of
@@ -687,13 +690,12 @@ findNccOwner Ncc { nccToks = index } parentTok wme =
   liftM (Map.lookup (OwnerKey parentTok wme)) (readTVar index)
 {-# INLINE findNccOwner #-}
 
--- PRODUCTION NODES:
+-- PRODUCTION NODES
 
-leftActivateProd :: Env -> Prod -> Tok -> STM ()
-leftActivateProd env prod tok = do
-  newTok <- makeAndInsertTok env tok Nothing (ProdTokNode prod)
+leftActivateProd :: Env -> Prod -> Tok -> Maybe Wme -> STM ()
+leftActivateProd env prod tok wme = do
+  newTok <- makeAndInsertTok env tok wme (ProdTokNode prod)
             (prodToks prod)
-
   -- Fire action
   let action = prodAction prod
   action (Actx env prod newTok (tokWmes newTok))

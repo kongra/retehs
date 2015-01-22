@@ -47,49 +47,30 @@ module AI.Rete.Data
     , TokNode             (..)
     , TokSet
 
-      -- Negative join results
+      -- * Negative join results
     , NegJoinResult       (..)
     , NegJoinResultSet
 
-      -- α memory
+      -- * Alpha memory
     , Amem                (..)
-    , AmemSuccessor       (..)
 
-      -- Dummy Top Node
+      -- * Particular nodes
     , Dtn                 (..)
-
-      -- β memory
     , Bmem                (..)
-    , BmemParent          (..)
-    , BmemChild           (..)
-
-      -- * Joins
     , Join                (..)
     , JoinParent          (..)
-    , JoinChild           (..)
-    , JoinNearestAncestor (..)
     , JoinTest            (..)
-
-      -- * Negation
     , Neg                 (..)
-    , NegParent           (..)
-    , NegChild            (..)
-    , NegNearestAncestor  (..)
-
-      -- * Negated conjunction
     , Ncc                 (..)
-    , NccParent           (..)
-    , NccChild            (..)
     , OwnerKey            (..)
-
     , Partner             (..)
-    , PartnerParent       (..)
-    , PartnerChild        (..)
-
-      -- * Productions
     , Prod                (..)
-    , ProdParent          (..)
-    , ProdChild           (..)
+
+      -- * Generalized nodes
+    , AmemSuccessor       (..)
+    , CondNode            (..)
+    , CondNodeWithDtn     (..)
+    , CondChild           (..)
 
       -- * U/L
     , RightUnlinked       (..)
@@ -115,6 +96,8 @@ import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable, hashWithSalt)
 import qualified Data.Sequence as Seq
 
+-- IDENTITY
+
 -- | Identifier type. We treat negative identifiers as special ones,
 -- and the non-negative as auto-generated.
 type Id = Int
@@ -133,6 +116,8 @@ obj1 `eqOnId` obj2 = getId obj1 == getId obj2
 hashWithId :: HavingId a => Int -> a -> Int
 hashWithId salt x = salt `hashWithSalt` getId x
 {-# INLINE hashWithId #-}
+
+-- SYMBOLIC DATA
 
 -- | Constant (non-variable).
 data Constant = Constant !Id !String
@@ -169,11 +154,15 @@ instance Eq Symbol where
 
 instance Hashable Symbol where hashWithSalt = hashWithId
 
-type WmeSet            = Set.HashSet Wme
-type WmesIndex a       = Map.HashMap a WmeSet
-type WmesByObj         = WmesIndex Obj
-type WmesByAttr        = WmesIndex Attr
-type WmesByVal         = WmesIndex Val
+-- | The user-friendly representation of symbols.
+data S = S   !String
+       | Sym !Symbol
+
+instance Show S where
+  show (S   s) = s
+  show (Sym s) = show s
+
+-- ENVIRONMENT
 
 -- | Environment. Contains a global context for the running algorithm.
 data Env =
@@ -206,6 +195,8 @@ data Env =
   , envDtn :: !Dtn
   }
 
+-- FIELDS AND THEIR VALUES
+
 -- | Object (Constant or Variable).
 newtype Obj = Obj Symbol deriving Eq
 
@@ -234,8 +225,13 @@ instance Hashable Val where
 -- variants correspond with Obj, Attr and Val.
 data Field = O | A | V deriving (Show, Eq)
 
-type TokSet           = Set.HashSet Tok
-type NegJoinResultSet = Set.HashSet NegJoinResult
+-- WMES
+
+type WmeSet            = Set.HashSet Wme
+type WmesIndex a       = Map.HashMap a WmeSet
+type WmesByObj         = WmesIndex Obj
+type WmesByAttr        = WmesIndex Attr
+type WmesByVal         = WmesIndex Val
 
 -- | Working Memory Element (fact).
 data Wme =
@@ -271,6 +267,11 @@ data WmeKey = WmeKey !Obj !Attr !Val deriving Eq
 instance Hashable WmeKey where
   hashWithSalt salt (WmeKey obj attr val) =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
+
+-- TOKS (TOKENS)
+
+type TokSet           = Set.HashSet Tok
+type NegJoinResultSet = Set.HashSet NegJoinResult
 
 data TokNode = DtnTokNode     !Dtn
              | BmemTokNode    !Bmem
@@ -322,8 +323,7 @@ instance HavingId Tok where getId        = tokId
 instance Eq       Tok where (==)         = eqOnId
 instance Hashable Tok where hashWithSalt = hashWithId
 
--- | Rete nodes - successors of an Amem.
-data AmemSuccessor = JoinAmemSuccessor !Join deriving Eq
+-- AMEM (ALPHA MEMORY)
 
 -- | Alpha Memory.
 data Amem =
@@ -358,6 +358,32 @@ instance Hashable Amem where
   hashWithSalt salt Amem { amemObj = obj, amemAttr = attr, amemVal = val } =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
 
+-- GENERALIZED NODES
+
+-- | Amem successor. May also be used to represent nodes holding a
+-- reference to an Amem.
+data AmemSuccessor = JoinAmemSuccessor !Join
+                   | NegAmemSuccessor  !Neg  deriving Eq
+
+-- | Represents the nodes that occur as results of building the network
+-- structure for various types of conditions.
+data CondNode = PosCondNode !Join
+              | NegCondNode !Neg
+              | NccCondNode !Ncc
+
+-- | A special case of CondNode that adds a Dtn extension.
+data CondNodeWithDtn = DtnCondNode !Dtn
+                     | StdCondNode !CondNode
+
+-- | Type of nodes that are children of CondNodes.
+data CondChild = BmemCondChild    !Bmem
+               | NegCondChild     !Neg
+               | NccCondChild     !Ncc
+               | PartnerCondChild !Partner
+               | ProdCondChild    !Prod
+
+-- PARTICULAR NODES
+
 -- | A singleton (within Env) Dummy Top Node.
 data Dtn =
   Dtn
@@ -367,28 +393,20 @@ data Dtn =
     -- Indices below store Dtn children in a way usable during network
     -- construction. Ordering does not matter cause none of the
     -- children gets ever activated by Dtn.
-  , dtnJoins :: !(TVar (Map.HashMap Amem          Join))
-  , dtnNegs  :: !(TVar (Map.HashMap Amem          Neg))
-  , dtnNccs  :: !(TVar (Map.HashMap PartnerParent Ncc))
+  , dtnJoins :: !(TVar (Map.HashMap Amem     Join))
+  , dtnNegs  :: !(TVar (Map.HashMap Amem     Neg))
+  , dtnNccs  :: !(TVar (Map.HashMap CondNode Ncc))
   }
-
--- | Parent (node) of a Bmem.
-data BmemParent = JoinBmemParent !Join
-                | NegBmemParent  !Neg
-                | NccBmemParent  !Ncc
-
--- | Child (node) of a Bmem.
-data BmemChild  = BmemChild
 
 -- | Beta Memory.
 data Bmem =
   Bmem
   {
     bmemId          :: !Id
-  , bmemParent      :: !BmemParent
-  , bmemChildren    :: !(TVar (Seq.Seq BmemChild))
+  , bmemParent      :: !CondNode
+  , bmemChildren    :: !(TVar (Seq.Seq Join))
 
-  , bmemAllChildren :: !(TVar (Seq.Seq BmemChild))
+  , bmemAllChildren :: !(TVar (Seq.Seq Join))
   , bmemToks        :: !(TVar TokSet)
   }
 
@@ -411,12 +429,6 @@ data JoinTest =
 -- | Parent node of a Join node.
 data JoinParent = BmemJoinParent !Bmem | DtnJoinParent !Dtn
 
--- | Child node of a Join node.
-data JoinChild = BmemJoinChild !Bmem
-
--- | Nearest ancestor of a Join node having the same Amem.
-data JoinNearestAncestor = JoinNearestAncestor
-
 -- | Right-unlinked flag.
 newtype RightUnlinked = RightUnlinked Bool
 
@@ -427,60 +439,45 @@ newtype LeftUnlinked = LeftUnlinked Bool
 data Join =
   Join
   {
-    joinId             :: !Id
-  , joinParent         :: !JoinParent
-  , joinChildren       :: !(TVar (Seq.Seq JoinChild))
+    joinId              :: !Id
+  , joinParent          :: !JoinParent
+  , joinChildren        :: !(TVar (Seq.Seq CondChild))
 
-  , joinAmem           :: !Amem
-  , joinNearestAncestor :: !JoinNearestAncestor
-  , joinTests          :: ![JoinTest]
-  , joinLeftUnlinked   :: !(TVar LeftUnlinked)
-  , joinRightUnlinked  :: !(TVar RightUnlinked)
+  , joinAmem            :: !Amem
+  , joinNearestAncestor :: !AmemSuccessor
+  , joinTests           :: ![JoinTest]
+  , joinLeftUnlinked    :: !(TVar LeftUnlinked)
+  , joinRightUnlinked   :: !(TVar RightUnlinked)
   }
 
 instance HavingId Join where getId = joinId
 instance Eq       Join where (==)  = eqOnId
-
--- | Parent node of a Neg node.
-data NegParent = NegParent
-
--- | Child node of a Neg node.
-data NegChild = BmemNegChild !Bmem
-
--- | Nearest ancestor of a Neg node having the same Amem.
-data NegNearestAncestor = NegNearestAncestor
 
 -- | Negative Node.
 data Neg =
   Neg
   {
     negId              :: !Id
-  , negParent          :: !NegParent
-  , negChildren        :: !(TVar (Seq.Seq NegChild))
+  , negParent          :: !CondNodeWithDtn
+  , negChildren        :: !(TVar (Seq.Seq CondChild))
 
   , negToks            :: !(TVar TokSet)
   , negAmem            :: !Amem
   , negTests           :: ![JoinTest]
-  , negNearestAncestor :: !NegNearestAncestor
+  , negNearestAncestor :: !AmemSuccessor
   , negRightUnlinked   :: !(TVar RightUnlinked)
   }
 
 instance HavingId Neg where getId = negId
 instance Eq       Neg where (==)  = eqOnId
 
--- | Parent node of a Ncc node.
-data NccParent = NccParent
-
--- | Child node of a Ncc node.
-data NccChild = BmemNccChild !Bmem
-
 -- | Ncc node.
 data Ncc =
   Ncc
   {
     nccId       :: !Id
-  , nccParent   :: !NccParent
-  , nccChildren :: !(TVar (Seq.Seq NccChild))
+  , nccParent   :: !CondNodeWithDtn
+  , nccChildren :: !(TVar (Seq.Seq CondChild))
 
   , nccToks      :: !(TVar (Map.HashMap OwnerKey Tok))
   , nccPartner  :: !Partner
@@ -496,19 +493,12 @@ instance Hashable OwnerKey where
   hashWithSalt salt (OwnerKey parent wme) =
     salt `hashWithSalt` parent `hashWithSalt` wme
 
--- | Parent node of a Partner node.
-data PartnerParent = PartnerParent
-
--- | Child node of a Partner node.
-data PartnerChild = PartnerChild
-
 -- | Ncc partner node.
 data Partner =
   Partner
   {
     partnerId       :: !Id
-  , partnerParent   :: !PartnerParent
-  , partnerChildren :: !(TVar (Seq.Seq PartnerChild))
+  , partnerParent   :: !CondNode
 
   , partnerNcc      :: !Ncc
   , partnerConjucts :: !Int
@@ -524,18 +514,12 @@ data Location = Location !Field !Distance
 -- | Map of variable bindings for productions.
 type Bindings = Map.HashMap Variable Location
 
--- | Parent node of a Prod node.
-data ProdParent = ProdParent
-
--- | Child node of a Prod node.
-data ProdChild = ProdChild
-
 -- | Production node.
 data Prod =
   Prod
   {
     prodId           :: !Id
-  , prodParent       :: !ProdParent
+  , prodParent       :: !CondNode
   , prodToks         :: !(TVar TokSet)
   , prodAction       :: !Action
   , prodRevokeAction :: !(Maybe Action)
@@ -544,6 +528,8 @@ data Prod =
 
 instance HavingId Prod where getId = prodId
 instance Eq       Prod where (==)  = eqOnId
+
+-- ACTIONS
 
 -- | Context of a production action.
 data Actx =
@@ -558,13 +544,7 @@ data Actx =
 -- | Action of a production.
 type Action = Actx -> STM ()
 
--- | The user-friendly representation of symbols.
-data S = S   !String
-       | Sym !Symbol
-
-instance Show S where
-  show (S   s) = s
-  show (Sym s) = show s
+-- CONDITIONS
 
 -- | The condition of a production.
 data Cond = PosCond !Obj !Attr !Val
