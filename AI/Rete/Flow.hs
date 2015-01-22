@@ -713,30 +713,30 @@ relinkToParent join parent = do
 -- RIGHT U/L (Joins AND Negs - AmemSuccessors)
 
 isRightUnlinked :: AmemSuccessor -> STM Bool
-isRightUnlinked node = liftM toBool (readTVar (rightUnlinkedTVar node))
+isRightUnlinked node = liftM toBool (readTVar (rightUnlinked node))
 {-# INLINE isRightUnlinked #-}
 
 rightUnlink :: AmemSuccessor -> Amem -> STM ()
 rightUnlink node amem = do
-  modifyTVar' (amemSuccessors    amem) (removeFirstOccurence node)
-  writeTVar   (rightUnlinkedTVar node) (RightUnlinked True)
+  modifyTVar' (amemSuccessors amem) (removeFirstOccurence node)
+  writeTVar   (rightUnlinked  node) (RightUnlinked True)
 {-# INLINE rightUnlink #-}
 
 relinkToAmem :: AmemSuccessor -> STM ()
 relinkToAmem node = do
-  let amem = successorAmem node
+  let amem' = nodeAmem node
   ancestorLookup <- relinkAncestor node
   case ancestorLookup of
     Just ancestor ->
       -- insert node into node.amem.successors immediately before
       -- ancestor
-      modifyTVar' (amemSuccessors amem)
+      modifyTVar' (amemSuccessors amem')
         (node `insertBeforeFirstOccurence` ancestor)
 
     -- insert node at the tail of node.amem.successors
-    Nothing -> toTSeqEnd (amemSuccessors amem) node
+    Nothing -> toTSeqEnd (amemSuccessors amem') node
 
-  writeTVar (rightUnlinkedTVar node) (RightUnlinked False)
+  writeTVar (rightUnlinked node) (RightUnlinked False)
 {-# INLINE relinkToAmem #-}
 
 -- | The goal of this loop is to find the nearest right linked
@@ -758,17 +758,17 @@ successorProp f1 f2 node = case node of
     NegAmemSuccessor  neg  -> f2 neg
 {-# INLINE successorProp #-}
 
-rightUnlinkedTVar :: AmemSuccessor -> TVar RightUnlinked
-rightUnlinkedTVar  = successorProp joinRightUnlinked negRightUnlinked
-{-# INLINE rightUnlinkedTVar #-}
+rightUnlinked :: AmemSuccessor -> TVar RightUnlinked
+rightUnlinked  = successorProp joinRightUnlinked negRightUnlinked
+{-# INLINE rightUnlinked #-}
 
 nearestAncestor :: AmemSuccessor -> Maybe AmemSuccessor
 nearestAncestor = successorProp joinNearestAncestor negNearestAncestor
 {-# INLINE nearestAncestor #-}
 
-successorAmem :: AmemSuccessor -> Amem
-successorAmem = successorProp joinAmem negAmem
-{-# INLINE successorAmem #-}
+nodeAmem :: AmemSuccessor -> Amem
+nodeAmem = successorProp joinAmem negAmem
+{-# INLINE nodeAmem #-}
 
 -- DELETING TOKENS
 
