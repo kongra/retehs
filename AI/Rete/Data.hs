@@ -282,7 +282,7 @@ data AmemSuccessor = JoinAmemSuccessor !Join
 -- structure for various types of conditions.
 data CondNode = PosCondNode !Join
               | NegCondNode !Neg
-              | NccCondNode !Ncc
+              | NccCondNode !Ncc  deriving Eq
 
 -- | A special case of CondNode that adds a Dtn extension.
 data CondNodeWithDtn = DtnCondNode !Dtn
@@ -303,12 +303,11 @@ data Dtn =
   {
     dtnTok :: !Tok -- ^ Dummy Top Token
 
-    -- Indices below store Dtn children in a way usable during network
-    -- construction. Ordering does not matter cause none of the
-    -- children gets ever activated by Dtn.
-  , dtnJoins :: !(TVar (Map.HashMap Amem     Join))
-  , dtnNegs  :: !(TVar (Map.HashMap Amem     Neg))
-  , dtnNccs  :: !(TVar (Map.HashMap CondNode Ncc))
+  , dtnAllJoins :: !(TVar (Set.HashSet Join))
+  , dtnAllNegs  :: !(TVar (Set.HashSet Neg))
+  , dtnAllNccs  :: !(TVar (Set.HashSet Ncc))
+
+  , dtnChildren :: !(TVar (Seq.Seq CondNode))
   }
 
 -- | Beta Memory.
@@ -317,9 +316,13 @@ data Bmem =
   {
     bmemId          :: !Id
   , bmemParent      :: !CondNode
-  , bmemChildren    :: !(TVar (Seq.Seq Join))
 
-  , bmemAllChildren :: !(TVar (Seq.Seq Join))
+    -- Bmem is the only type of node where the children ordering
+    -- doesn't matter. In other nodes we must keep the ordering due to
+    -- Ncc subnetwork issues.
+  , bmemChildren    :: !(TVar (Set.HashSet Join))
+
+  , bmemAllChildren :: !(TVar (Set.HashSet Join))
   , bmemToks        :: !(TVar TokSet)
   }
 
@@ -365,6 +368,7 @@ data Join =
 
 instance HavingId Join where getId = joinId
 instance Eq       Join where (==)  = eqOnId
+instance Hashable Join where hashWithSalt = hashWithId
 
 -- | Negative Node.
 data Neg =

@@ -22,7 +22,7 @@ import           Data.Foldable (Foldable, toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isJust, fromJust)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (forMM_, toListM, whenM)
 import           Kask.Data.Sequence (removeFirstOccurence,
@@ -79,19 +79,21 @@ wmesIndexDelete k wme index =
 createEnv :: STM Env
 createEnv = do
   -- Dummies.
-  dttChildren   <- newTVar Set.empty
-  dttNjResults  <- newTVar Set.empty
-  dttNccResults <- newTVar Set.empty
-  dttOwner      <- newTVar Nothing
+  dttChildren    <- newTVar Set.empty
+  dttNjResults   <- newTVar Set.empty
+  dttNccResults  <- newTVar Set.empty
+  dttOwner       <- newTVar Nothing
 
-  theDtnJoins  <- newTVar Map.empty
-  theDtnNegs   <- newTVar Map.empty
-  theDtnNccs   <- newTVar Map.empty
+  theDtnJoins    <- newTVar Set.empty
+  theDtnNegs     <- newTVar Set.empty
+  theDtnNccs     <- newTVar Set.empty
+  theDtnChildren <- newTVar Seq.empty
 
   let dtn = Dtn { dtnTok            = dtt
-                , dtnJoins          = theDtnJoins
-                , dtnNegs           = theDtnNegs
-                , dtnNccs           = theDtnNccs }
+                , dtnAllJoins       = theDtnJoins
+                , dtnAllNegs        = theDtnNegs
+                , dtnAllNccs        = theDtnNccs
+                , dtnChildren       = theDtnChildren }
 
       dtt = Tok { tokId             = -1
                 , tokParent         = Nothing
@@ -195,23 +197,35 @@ wildcardConstant = Constant (-3) "*"
 
 -- INTERNING CONSTANTS AND VARIABLES
 
-class InternSymbol a where
+class Symbolic a where
   -- | Interns and returns a Symbol for the name argument.
   internSymbol :: Env -> a -> STM Symbol
 
-instance InternSymbol Symbol where
+  -- | Only if there is an interned symbol of the given name,
+  -- returns Just it, Nothing otherwise.
+  internedSymbol :: Env -> a -> STM (Maybe Symbol)
+
+instance Symbolic Symbol where
   -- We may simply return the argument here, because Constants and
   -- Variables once interned never expire (get un-interned). Otherwise
   -- we would have to intern the argument's name.
-  internSymbol _ = return
+  internSymbol   _ = return
+  internedSymbol _ = return . Just
 
-instance InternSymbol String where
+instance Symbolic String where
   internSymbol env name = case symbolName name of
     EmptyConst     -> return (Const emptyConstant)
     EmptyVar       -> return (Var   emptyVariable)
     OneCharConst   -> liftM  Const (internConstant env name)
     MultiCharVar   -> liftM  Var   (internVariable env name)
     MultiCharConst -> liftM  Const (internConstant env name)
+
+  internedSymbol env name = case symbolName name of
+    EmptyConst     -> return $! Just (Const emptyConstant)
+    EmptyVar       -> return $! Just (Var   emptyVariable)
+    OneCharConst   -> internedConstant env name
+    MultiCharVar   -> internedVariable env name
+    MultiCharConst -> internedConstant env name
 
 data SymbolName = EmptyConst
                 | EmptyVar
@@ -253,19 +267,6 @@ internVariable env name = do
       return v
 {-# INLINE internVariable #-}
 
--- ACCESSING SYMBOLS (ALREADY INTERNED)
-
--- | Only if there is an interned symbol of the given name, returns
--- Just it, Nothing otherwise.
-internedSymbol :: Env -> String -> STM (Maybe Symbol)
-internedSymbol env name = case symbolName name of
-    EmptyConst     -> return $! Just (Const emptyConstant)
-    EmptyVar       -> return $! Just (Var   emptyVariable)
-    OneCharConst   -> internedConstant env name
-    MultiCharVar   -> internedVariable env name
-    MultiCharConst -> internedConstant env name
-{-# INLINE internedSymbol #-}
-
 internedConstant :: Env -> String -> STM (Maybe Symbol)
 internedConstant Env { envConstants = consts } name = do
   cs <- readTVar consts
@@ -304,7 +305,9 @@ activateAmem env amem wme = do
 
 -- WMES
 
-addWme :: (InternSymbol a, InternSymbol b, InternSymbol c) =>
+-- | Adds a new fact represented by three fields and returns its Wme.
+-- When a Wme already exists in the system, does and returns Nothing.
+addWme :: (Symbolic a, Symbolic b, Symbolic c) =>
           Env -> a -> b -> c -> STM (Maybe Wme)
 addWme env obj attr val = do
   obj'  <- internSymbol env obj
@@ -329,7 +332,7 @@ addWme env obj attr val = do
       return (Just wme)
 
 -- | Works like addWme inside an action (of a production).
-addWmeA :: (InternSymbol a, InternSymbol b, InternSymbol c) =>
+addWmeA :: (Symbolic a, Symbolic b, Symbolic c) =>
            Actx -> a -> b -> c -> STM (Maybe Wme)
 addWmeA actx = addWme (actxEnv actx)
 {-# INLINE addWmeA #-}
@@ -511,7 +514,7 @@ leftActivateJoin env join tok = do
   -- When join.parent just became non-empty.
   whenM (isRightUnlinked (JoinAmemSuccessor join)) $ do
     relinkToAmem (JoinAmemSuccessor join)
-    when isAmemEmpty $ leftUnlink join (joinParent join)
+    when isAmemEmpty $ leftUnlink join
 
   unless isAmemEmpty $ do
     children <- readTVar (joinChildren join)
@@ -549,7 +552,7 @@ rightActivateJoin env join wme = do
 
 joinParentTokSet :: JoinParent -> STM TokSet
 joinParentTokSet parent = case parent of
-  DtnJoinParent  {}                       -> return Set.empty
+  DtnJoinParent  Dtn  { dtnTok   = dtt  } -> return (Set.singleton dtt)
   BmemJoinParent Bmem { bmemToks = toks } -> readTVar toks
 {-# INLINE joinParentTokSet #-}
 
@@ -687,16 +690,12 @@ isLeftUnlinked :: Join -> STM Bool
 isLeftUnlinked join = liftM toBool (readTVar (joinLeftUnlinked join))
 {-# INLINE isLeftUnlinked #-}
 
-leftUnlink :: Join -> JoinParent -> STM ()
-leftUnlink join parent = do
-  case parent of
-    BmemJoinParent bmem -> modifyTVar' (bmemChildren bmem)
-                           (removeFirstOccurence join)
-
-    -- Dtn doesn't hold any live references to nodes, other than
-    -- indices, used during network construction (like
-    -- bmemAllChildren in Bmem). Thus we do nothing here.
-    DtnJoinParent  _ -> return ()
+leftUnlink :: Join -> STM ()
+leftUnlink join = do
+  case joinParent join of
+    BmemJoinParent bmem -> modifyTVar' (bmemChildren bmem) (Set.delete join)
+    DtnJoinParent  dtn  -> modifyTVar' (dtnChildren dtn)
+                           (removeFirstOccurence $! PosCondNode join)
 
   writeTVar (joinLeftUnlinked join) (LeftUnlinked True)
 {-# INLINE leftUnlink #-}
@@ -704,8 +703,8 @@ leftUnlink join parent = do
 relinkToParent :: Join -> JoinParent -> STM ()
 relinkToParent join parent = do
   case parent of
-    BmemJoinParent bmem -> toTSeqFront (bmemChildren bmem) join
-    DtnJoinParent  _    -> return () -- As in leftUnlink.
+    BmemJoinParent bmem -> modifyTVar' (bmemChildren bmem) (Set.insert join)
+    DtnJoinParent  dtn  -> toTSeqFront (dtnChildren  dtn ) $! PosCondNode join
 
   writeTVar (joinLeftUnlinked join) (LeftUnlinked False)
 {-# INLINE relinkToParent #-}
@@ -770,7 +769,185 @@ nodeAmem :: AmemSuccessor -> Amem
 nodeAmem = successorProp joinAmem negAmem
 {-# INLINE nodeAmem #-}
 
--- DELETING TOKENS
+-- REMOVING WMES
+
+-- | Removes the fact described by 3 symbols. Returns True on success
+-- and False when the fact was not present in the system.
+removeWme :: (Symbolic a, Symbolic b, Symbolic c) =>
+             Env -> a -> b -> c -> STM Bool
+removeWme env obj attr val = do
+  obj'  <- internedSymbol env obj
+  attr' <- internedSymbol env attr
+  val'  <- internedSymbol env val
+
+  if isJust obj' && isJust attr' && isJust val'
+    then removeWmeImpl env
+                       (Obj  (fromJust obj' ))
+                       (Attr (fromJust attr'))
+                       (Val  (fromJust val' ))
+
+    -- At least 1 of the names didn't have a corresponding interned
+    -- symbol, the wme can't exist.
+    else return False
+
+-- | Works like 'removeWme' inside an 'Action' (of a production).
+removeWmeA :: (Symbolic a, Symbolic b, Symbolic c) =>
+              Actx -> a -> b -> c -> STM Bool
+removeWmeA actx = removeWme (actxEnv actx)
+{-# INLINE removeWmeA #-}
+
+removeWmeImpl :: Env -> Obj -> Attr -> Val -> STM Bool
+removeWmeImpl env obj attr val = do
+  wmes <- readTVar (envWmes env)
+  let k = WmeKey obj attr val
+  case Map.lookup k wmes of
+    Nothing -> return False
+    Just wme -> do
+      -- Remove from Working Memory (Env registry and indexes)
+      writeTVar (envWmes env) $! Map.delete k wmes
+      deleteFromEnvIndexes env wme
+      -- ... and propagate down the network.
+      propagateWmeRemoval env wme obj attr val
+      return True
+{-# INLINE removeWmeImpl #-}
+
+propagateWmeRemoval :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
+propagateWmeRemoval env wme obj attr val = do
+  -- For every amem this wme belongs to ...
+  forMM_ (readTVar (wmeAmems wme)) $ \amem -> do
+    -- ... remove wme from amem indexes.
+    modifyTVar' (amemWmesByObj  amem) (wmesIndexDelete obj  wme)
+    modifyTVar' (amemWmesByAttr amem) (wmesIndexDelete attr wme)
+    modifyTVar' (amemWmesByVal  amem) (wmesIndexDelete val  wme)
+    wmes <- readTVar (amemWmes amem)
+    let updatedWmes = Set.delete wme wmes
+    writeTVar (amemWmes amem) updatedWmes
+
+    when (Set.null updatedWmes) $ -- Amem just became empty, so ...
+      -- ... left-unlink all Join successors.
+      forMM_ (toListT (amemSuccessors amem)) $ \s ->
+        case s of
+          JoinAmemSuccessor join -> leftUnlink join
+          NegAmemSuccessor  _    -> return ()
+
+  -- Delete all tokens wme is in. We remove every token from it's
+  -- parent token but avoid removing from wme.
+  forMM_ (toListT (wmeToks wme)) $ \tok ->
+    deleteTokAndDescendents env tok RemoveFromParent DontRemoveFromWme
+
+  -- For every jr in wme.negative-join-results ...
+  forMM_ (toListT (wmeNegJoinResults wme)) $ \jr -> do
+    -- ... remove jr from jr.owner.negative-join-results.
+    let owner = njrOwner jr
+    jresults <- readTVar (tokNegJoinResults owner)
+    let updatedJresults = Set.delete jr jresults
+    writeTVar (tokNegJoinResults owner) updatedJresults
+
+    -- If jr.owner.negative-join-results is nil
+    when (Set.null updatedJresults) $
+      leftActivateOwnerNodeChildren owner
+
+      -- For each child in jr.owner.node.children
+      -- mapMM_ (leftActivate env owner Nothing)
+      --   ((toListT . nodeChildren . tokNode) owner)
+
+leftActivateOwnerNodeChildren :: Tok -> STM ()
+leftActivateOwnerNodeChildren = undefined
+
+-- DELETING TOKS
+
+data TokTokPolicy = RemoveFromParent | DontRemoveFromParent
+data TokWmePolicy = RemoveFromWme    | DontRemoveFromWme
+
+-- -- | Deletes the descendents of the passed token.
+-- deleteDescendentsOfTok :: Env -> Tok -> STM ()
+-- deleteDescendentsOfTok env tok = do
+--   children <- readTVar (tokChildren tok)
+--   unless (Set.null children) $ do
+--     writeTVar (tokChildren tok) $! Set.empty
+--     -- Iteratively remove, skip removing from parent.
+--     mapM_ (deleteTokAndDescendents env False True) (Set.toList children)
+
+-- -- | Deletes the token and it's descendents.
+-- deleteTokAndDescendents :: Env -> Bool -> Bool -> Tok -> STM ()
+-- deleteTokAndDescendents env removeFromParent removeFromWme tok = do
+--   deleteDescendentsOfTok env tok
+
+--   let node = tokNode tok
+
+--   -- If tok.node is not Ncc partner ...
+--   unless (isNccPartner node) $
+--     -- ... remove tok from tok.node.items.
+--     modifyTVar' (vprop nodeToks node) (Set.delete tok)
+
+--   when removeFromWme $ do
+--     let wme = tokWme tok
+--     when (isJust wme) $ -- If tok.wme /= null ...
+--       -- ... remove tok from tok.wme.tokens.
+--       modifyTVar' (wmeToks (fromJust wme)) (Set.delete tok)
+
+--   when removeFromParent $
+--     -- Remove tok from tok.parent.children
+--      modifyTVar' (tokChildren (tokParent tok)) (Set.delete tok)
+
+--   -- Node variant-specific cleanup:
+--   case nodeVariant node of
+--     Bmem {} ->
+--       whenM (nullTSet (vprop nodeToks node)) $
+--         forMM_ (toListT (nodeChildren node)) $ \child ->
+--           -- Beware, some children may not have amem, e.g. predicate
+--           -- nodes. If needed introduce a check here.
+--           rightUnlink child (vprop nodeAmem child)
+
+--     NegNode {} -> do
+--       whenM (nullTSet (vprop nodeToks node)) $
+--         rightUnlink node (vprop nodeAmem node)
+
+--       -- For jr in tok.(neg)-join-results
+--       forMM_ (toListT (tokNegJoinResults tok)) $ \jr ->
+--         -- remove jr from jr.wme.negative-join-results
+--         modifyTVar' (wmeNegJoinResults (negativeJoinResultWme jr))
+--           (Set.delete jr)
+
+--     NccNode {} ->
+--       -- For result-tok in tok.ncc-results ...
+--       forMM_ (toListT (tokNccResults tok)) $ \resultTok -> do
+--           -- ... remove result-tok from result-tok.wme.tokens,
+--           modifyTVar' (wmeToks (fromJust (tokWme resultTok)))
+--             (Set.delete resultTok)
+
+--           -- ... remove result-tok from result-tok.parent.children.
+--           modifyTVar' (tokChildren (tokParent resultTok))
+--             (Set.delete resultTok)
+
+--     NccPartner {} -> do
+--       (Just owner) <- readTVar (tokOwner tok)
+--       -- A token in Ncc partner always has owner.
+
+--       -- Remove tok from tok.owner.ncc-results
+--       nccResults <- readTVar (tokNccResults owner)
+--       let updatedNccResults = Set.delete tok nccResults
+--       writeTVar (tokNccResults owner) $! updatedNccResults
+
+--       -- If tok.owner.ncc-results is nil
+--       when (Set.null updatedNccResults) $ do
+--         nccNode <- rvprop nccPartnerNccNode node
+--         -- For child in tok.node.ncc-node.children -> leftActivate
+--         mapMM_ (leftActivate env owner Nothing)
+--           ((toListT . nodeChildren . fromJust ) nccNode)
+
+--     PNode {} ->
+--       -- For production nodes the only specific behavior is firing a
+--       -- proper action.
+--       case vprop pnodeRevokeAction node of
+--         Nothing     -> return ()
+--         Just action -> action (Actx env node tok (tokWmes tok))
+
+--     DTN      {} -> error "Deleting token(s) from Dummy Top Node is evil."
+--     JoinNode {} -> error "Can't happen."
 
 deleteDescendentsOfTok :: Env -> Tok -> STM ()
 deleteDescendentsOfTok = undefined
+
+deleteTokAndDescendents :: Env -> Tok -> TokTokPolicy -> TokWmePolicy -> STM ()
+deleteTokAndDescendents = undefined
