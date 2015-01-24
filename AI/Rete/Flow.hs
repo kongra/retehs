@@ -438,6 +438,13 @@ leftActivateCondChild env child = case child of
   ProdCondChild    prod    -> leftActivateProd    env prod
 {-# INLINE leftActivateCondChild #-}
 
+leftActivateCondNode :: Env -> CondNode -> Tok -> Maybe Wme -> STM ()
+leftActivateCondNode env child tok wme = case child of
+  PosCondNode join -> leftActivateJoin env join tok
+  NegCondNode neg  -> leftActivateNeg  env neg  tok wme
+  NccCondNode ncc  -> leftActivateNcc  env ncc  tok wme
+{-# INLINE leftActivateCondNode #-}
+
 -- BMEM
 
 -- | Performs left-activation of a Bmem.
@@ -753,8 +760,8 @@ relinkAncestor node = do
 
 successorProp :: (Join -> a) -> (Neg -> a) -> AmemSuccessor -> a
 successorProp f1 f2 node = case node of
-    JoinAmemSuccessor join -> f1 join
-    NegAmemSuccessor  neg  -> f2 neg
+  JoinAmemSuccessor join -> f1 join
+  NegAmemSuccessor  neg  -> f2 neg
 {-# INLINE successorProp #-}
 
 rightUnlinked :: AmemSuccessor -> TVar RightUnlinked
@@ -845,14 +852,26 @@ propagateWmeRemoval env wme obj attr val = do
 
     -- If jr.owner.negative-join-results is nil
     when (Set.null updatedJresults) $
-      leftActivateOwnerNodeChildren owner
+      leftActivateOwnerNodeChildren env owner
+{-# INLINE propagateWmeRemoval #-}
 
-      -- For each child in jr.owner.node.children
-      -- mapMM_ (leftActivate env owner Nothing)
-      --   ((toListT . nodeChildren . tokNode) owner)
+leftActivateOwnerNodeChildren :: Env -> Tok -> STM ()
+leftActivateOwnerNodeChildren env owner = case tokNode owner of
+  DtnTokNode dtn -> forMM_ (toListT (dtnChildren dtn)) $ \child ->
+    leftActivateCondNode env child owner Nothing
 
-leftActivateOwnerNodeChildren :: Tok -> STM ()
-leftActivateOwnerNodeChildren = undefined
+  NegTokNode neg -> forMM_ (toListT (negChildren neg)) $ \child ->
+    leftActivateCondChild env child owner Nothing
+
+  NccTokNode ncc -> forMM_ (toListT (nccChildren ncc)) $ \child ->
+    leftActivateCondChild env child owner Nothing
+
+  BmemTokNode bmem -> forMM_ (toListT (bmemChildren bmem)) $ \join ->
+    leftActivateJoin env join owner
+
+  PartnerTokNode _    -> error "PANIC (5): Partner CAN'T BE AN owner.node."
+  ProdTokNode    _    -> error "PANIC (6): Prod CAN'T BE AN owner.node."
+{-# INLINE leftActivateOwnerNodeChildren #-}
 
 -- DELETING TOKS
 
