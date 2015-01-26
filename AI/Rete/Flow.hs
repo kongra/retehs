@@ -673,7 +673,7 @@ findOwnersPair 0 parentTok wme = (parentTok, wme)
 findOwnersPair i parentTok _   = findOwnersPair (i-1) parentTok' wme
   where
     wme        = tokWme parentTok
-    parentTok' = fromMaybe (error "PANIC (4): NO WAY TO ASK FOR PARENT.")
+    parentTok' = fromMaybe (error "PANIC (4): Dtt ??? Here ???!!!.")
                  (tokParent parentTok)
 
 -- | We search an owner (Tok) in ncc such that owner.parent =
@@ -925,7 +925,7 @@ deleteTokAndDescendents env tok tokPolicy wmePolicy = do
 removeTokFromItsNode :: Tok -> STM ()
 removeTokFromItsNode tok = case tokNode tok of
   PartnerTokNode _    -> return ()
-  DtnTokNode     _    -> error "PANIC (9): DO NOT REMOVE Dtt FROM Dtn."
+  DtnTokNode     _    -> error "PANIC (9): Dtt ??? Here ???!!!."
   BmemTokNode    bmem -> removeTok        (bmemToks bmem) tok
   ProdTokNode    prod -> removeTok        (prodToks prod) tok
   NegTokNode     neg  -> removeTok        (negToks  neg)  tok
