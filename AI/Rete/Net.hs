@@ -1,7 +1,7 @@
-{-# LANGUAGE Trustworthy #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# OPTIONS_GHC -W -Wall #-}
+{-# LANGUAGE    Trustworthy           #-}
+{-# LANGUAGE    MultiParamTypeClasses #-}
+{-# LANGUAGE    FlexibleInstances     #-}
+{-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Net
@@ -176,53 +176,54 @@ sortConds :: [Cond] -> [Cond]
 sortConds = map processCond . sortBy (flip condsOrdering)
   where
     processCond c = case c of
-      (NccCond subconds) -> NccCond (sortConds subconds)
-      _                  -> c
+      CNccCond (NccCond subs) -> CNccCond $! NccCond $! sortConds subs
+      _                       -> c
 {-# INLINE sortConds #-}
 
 condsOrdering :: Cond -> Cond -> Ordering
-condsOrdering PosCond {} PosCond {} = EQ
-condsOrdering PosCond {} _          = GT
+condsOrdering (CPosCond _) (CPosCond _) = EQ
+condsOrdering (CPosCond _) _            = GT
 
-condsOrdering NegCond {} PosCond {} = LT
-condsOrdering NegCond {} NegCond {} = EQ
-condsOrdering NegCond {} NccCond {} = GT
+condsOrdering (CNegCond _) (CPosCond _) = LT
+condsOrdering (CNegCond _) (CNegCond _) = EQ
+condsOrdering (CNegCond _) (CNccCond _) = GT
 
-condsOrdering NccCond {} PosCond {} = LT
-condsOrdering NccCond {} NegCond {} = LT
-condsOrdering NccCond {} NccCond {} = EQ
+condsOrdering (CNccCond _) (CPosCond _) = LT
+condsOrdering (CNccCond _) (CNegCond _) = LT
+condsOrdering (CNccCond _) (CNccCond _) = EQ
 {-# INLINE condsOrdering #-}
 
 -- JOIN TESTS
 
 -- | Returns a field within the PosCond that is equal to the passed
 -- Symbol.
-fieldEqualTo :: Cond -> Symbol -> Maybe Field
-fieldEqualTo (PosCond obj attr val) s
-  | obj  == Obj  s = Just O
-  | attr == Attr s = Just A
-  | val  == Val  s = Just V
-  | otherwise      = Nothing
-fieldEqualTo _ _  = error "PANIC (14): ONLY PosConds ALLOWED HERE."
+fieldEqualTo :: PosCond -> Symbol -> Maybe Field
+fieldEqualTo (PosCond (Obj obj) (Attr attr) (Val val)) s
+  | obj  == s = Just O
+  | attr == s = Just A
+  | val  == s = Just V
+  | otherwise = Nothing
 {-# INLINE fieldEqualTo #-}
 
-type IndexedCond  = (Cond, Distance)
-data IndexedField = IndexedField !Field !Distance
+type IndexedPosCond = (PosCond, Distance)
+data IndexedField   = IndexedField !Field !Distance
 
-indexedPositiveConds :: [Cond] -> [IndexedCond]
-indexedPositiveConds conds =
-  filter positive (zip (reverse conds) [0 ..])
+indexedPosConds :: [Cond] -> [IndexedPosCond]
+indexedPosConds = loop 0 . reverse
   where
-    positive (PosCond {}, _) = True
-    positive _               = False
-{-# INLINE indexedPositiveConds #-}
+    loop _ []     = []
+    loop i (c:cs) = case c of
+      CPosCond pc -> (pc, i) : loop (i+1) cs
+      _           ->           loop (i+1) cs
+{-# INLINE indexedPosConds #-}
 
-indexedField :: Symbol -> IndexedCond -> Maybe IndexedField
+indexedField :: Symbol -> IndexedPosCond -> Maybe IndexedField
 indexedField s (cond, d) = case fieldEqualTo cond s of
   Nothing -> Nothing
   Just f  -> Just (IndexedField f d)
+{-# INLINE indexedField #-}
 
-joinTestFromField :: Symbol -> Field -> [IndexedCond] -> Maybe JoinTest
+joinTestFromField :: Symbol -> Field -> [IndexedPosCond] -> Maybe JoinTest
 joinTestFromField v field earlierConds
   | isVariable v =
     case headMay (matches earlierConds) of
@@ -236,23 +237,23 @@ joinTestFromField v field earlierConds
     matches = map fromJust . filter isJust . map (indexedField v)
 {-# INLINE joinTestFromField #-}
 
--- | Extracts and returns join tests for the given condition.
-joinTestsFromCond :: Cond -> [Cond] -> [JoinTest]
-joinTestsFromCond (PosCond obj attr val) earlierConds =
-  joinTestsFromCondImpl obj attr val earlierConds
-joinTestsFromCond (NegCond obj attr val) earlierConds =
-  joinTestsFromCondImpl obj attr val earlierConds
-joinTestsFromCond cond@_ _ =
-  error ("PANIC (15): ONLY PosCond OR NegCond ALLOWED HERE, GIVEN " ++ show cond)
-{-# INLINE joinTestsFromCond #-}
+class JoinTestsFromCond c where joinTestsFromCond :: c -> [Cond] -> [JoinTest]
+
+instance JoinTestsFromCond PosCond where
+  joinTestsFromCond (PosCond obj attr val) = joinTestsFromCondImpl obj attr val
+  {-# INLINE joinTestsFromCond #-}
+
+instance JoinTestsFromCond NegCond where
+  joinTestsFromCond (NegCond obj attr val) = joinTestsFromCondImpl obj attr val
+  {-# INLINE joinTestsFromCond #-}
 
 joinTestsFromCondImpl :: Obj -> Attr -> Val -> [Cond] -> [JoinTest]
 joinTestsFromCondImpl (Obj obj) (Attr attr) (Val val) earlierConds = result3
   where
-    econds  = indexedPositiveConds earlierConds
-    test1   = joinTestFromField    obj  O econds
-    test2   = joinTestFromField    attr A econds
-    test3   = joinTestFromField    val  V econds
+    econds  = indexedPosConds   earlierConds
+    test1   = joinTestFromField obj  O econds
+    test2   = joinTestFromField attr A econds
+    test3   = joinTestFromField val  V econds
 
     result1 = [fromJust test3 | isJust test3]
     result2 = if isJust test2 then fromJust test2 : result1 else result1

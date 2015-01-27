@@ -1,8 +1,8 @@
-{-# LANGUAGE Trustworthy #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE MultiParamTypeClasses #-}
-{-# OPTIONS_GHC -W -Wall #-}
+{-# LANGUAGE    Trustworthy           #-}
+{-# LANGUAGE    RankNTypes            #-}
+{-# LANGUAGE    FlexibleInstances     #-}
+{-# LANGUAGE    MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Flow

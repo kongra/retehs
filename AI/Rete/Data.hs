@@ -1,5 +1,5 @@
-{-# LANGUAGE Trustworthy #-}
-{-# OPTIONS_GHC -W -Wall #-}
+{-# LANGUAGE    Trustworthy #-}
+{-# OPTIONS_GHC -W -Wall    #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Data
@@ -43,18 +43,40 @@ hashWithId salt x = salt `hashWithSalt` getId x
 -- | Constant (non-variable).
 data Constant = Constant !Id !String
 
-instance Show     Constant where show  (Constant _   s) = s
-instance HavingId Constant where getId (Constant id' _) = id'
-instance Eq       Constant where (==)         = eqOnId
-instance Hashable Constant where hashWithSalt = hashWithId
+instance Show Constant where
+  show (Constant _ s) = s
+  {-# INLINE show #-}
+
+instance HavingId Constant where
+  getId (Constant id' _) = id'
+  {-# INLINE getId #-}
+
+instance Eq Constant where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Constant where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- | Variable.
 data Variable = Variable !Id !String
 
-instance Show     Variable where show  (Variable _   s) = s
-instance HavingId Variable where getId (Variable id' _) = id'
-instance Eq       Variable where (==)         = eqOnId
-instance Hashable Variable where hashWithSalt = hashWithId
+instance Show Variable where
+  show (Variable _ s) = s
+  {-# INLINE show #-}
+
+instance HavingId Variable where
+  getId (Variable id' _) = id'
+  {-# INLINE getId #-}
+
+instance Eq Variable where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Variable where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- | Constant or Variable is a Symbol.
 data Symbol = Const !Constant
@@ -63,17 +85,22 @@ data Symbol = Const !Constant
 instance Show Symbol where
   show (Const c) = show c
   show (Var   v) = show v
+  {-# INLINE show #-}
 
 instance HavingId Symbol where
   getId (Const c) = getId c
   getId (Var   v) = getId v
+  {-# INLINE getId #-}
 
 instance Eq Symbol where
   (Const c1) == (Const c2) = c1 == c2
   (Var   v1) == (Var   v2) = v1 == v2
   _          ==          _ = False
+  {-# INLINE (==) #-}
 
-instance Hashable Symbol where hashWithSalt = hashWithId
+instance Hashable Symbol where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- ENVIRONMENT
 
@@ -113,26 +140,35 @@ data Env =
 -- | Object (Constant or Variable).
 newtype Obj = Obj Symbol deriving Eq
 
-instance Show Obj where show (Obj s) = show s
+instance Show Obj where
+  show (Obj s) = show s
+  {-# INLINE show #-}
 
 instance Hashable Obj where
   hashWithSalt salt (Obj s) = salt `hashWithSalt` s
+  {-# INLINE hashWithSalt #-}
 
 -- | Attribute (Constant or Variable).
 newtype Attr = Attr Symbol deriving Eq
 
-instance Show Attr where show (Attr s) = show s
+instance Show Attr where
+  show (Attr s) = show s
+  {-# INLINE show #-}
 
 instance Hashable Attr where
   hashWithSalt salt (Attr s) = salt `hashWithSalt` s
+  {-# INLINE hashWithSalt #-}
 
 -- | Value (Constant or Variable).
 newtype Val = Val Symbol deriving Eq
 
-instance Show Val where show (Val s) = show s
+instance Show Val where
+  show (Val s) = show s
+  {-# INLINE show #-}
 
 instance Hashable Val where
   hashWithSalt salt (Val s) = salt `hashWithSalt` s
+  {-# INLINE hashWithSalt #-}
 
 -- | Field is a description of a location in Wmes, Conds etc. Its
 -- variants correspond with Obj, Attr and Val.
@@ -169,10 +205,19 @@ data Wme =
 instance Show Wme where
   show Wme { wmeObj = obj, wmeAttr = attr, wmeVal = val } =
     "(" ++ show obj  ++ "," ++ show attr ++ "," ++ show val  ++ ")"
+  {-# INLINE show #-}
 
-instance HavingId Wme where getId        = wmeId
-instance Eq       Wme where (==)         = eqOnId
-instance Hashable Wme where hashWithSalt = hashWithId
+instance HavingId Wme where
+  getId = wmeId
+  {-# INLINE getId #-}
+
+instance Eq Wme where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Wme where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- | Key for a Wme.
 data WmeKey = WmeKey !Obj !Attr !Val deriving Eq
@@ -180,6 +225,7 @@ data WmeKey = WmeKey !Obj !Attr !Val deriving Eq
 instance Hashable WmeKey where
   hashWithSalt salt (WmeKey obj attr val) =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
+  {-# INLINE hashWithSalt #-}
 
 -- TOKS (TOKENS)
 
@@ -201,6 +247,7 @@ data NegJoinResult =
 instance Hashable NegJoinResult where
   hashWithSalt salt (NegJoinResult owner wme) =
     salt `hashWithSalt` owner `hashWithSalt` wme
+  {-# INLINE hashWithSalt #-}
 
 -- | Token.
 data Tok =
@@ -232,9 +279,17 @@ data Tok =
   , tokOwner :: !(TVar (Maybe Tok))
   }
 
-instance HavingId Tok where getId        = tokId
-instance Eq       Tok where (==)         = eqOnId
-instance Hashable Tok where hashWithSalt = hashWithId
+instance HavingId Tok where
+  getId = tokId
+  {-# INLINE getId #-}
+
+instance Eq Tok where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Tok where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- AMEM (ALPHA MEMORY)
 
@@ -266,10 +321,12 @@ instance Eq Amem where
   Amem   { amemObj = obj1, amemAttr = attr1, amemVal = val1 } ==
     Amem { amemObj = obj2, amemAttr = attr2, amemVal = val2 } =
       obj1 == obj2 && attr1 == attr2 && val1 == val2
+  {-# INLINE (==) #-}
 
 instance Hashable Amem where
   hashWithSalt salt Amem { amemObj = obj, amemAttr = attr, amemVal = val } =
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
+  {-# INLINE hashWithSalt #-}
 
 -- GENERALIZED NODES
 
@@ -326,8 +383,13 @@ data Bmem =
   , bmemToks        :: !(TVar TokSet)
   }
 
-instance HavingId Bmem where getId = bmemId
-instance Eq       Bmem where (==) = eqOnId
+instance HavingId Bmem where
+  getId = bmemId
+  {-# INLINE getId #-}
+
+instance Eq Bmem where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
 
 -- | Distance within lists of Toks or Conds.
 type Distance = Int
@@ -366,9 +428,17 @@ data Join =
   , joinRightUnlinked   :: !(TVar RightUnlinked)
   }
 
-instance HavingId Join where getId = joinId
-instance Eq       Join where (==)  = eqOnId
-instance Hashable Join where hashWithSalt = hashWithId
+instance HavingId Join where
+  getId = joinId
+  {-# INLINE getId #-}
+
+instance Eq Join where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Join where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- | Negative Node.
 data Neg =
@@ -385,8 +455,13 @@ data Neg =
   , negRightUnlinked   :: !(TVar RightUnlinked)
   }
 
-instance HavingId Neg where getId = negId
-instance Eq       Neg where (==)  = eqOnId
+instance HavingId Neg where
+  getId = negId
+  {-# INLINE getId #-}
+
+instance Eq Neg where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
 
 -- | Ncc node.
 data Ncc =
@@ -400,8 +475,13 @@ data Ncc =
   , nccPartner  :: !Partner
   }
 
-instance HavingId Ncc where getId = nccId
-instance Eq       Ncc where (==)  = eqOnId
+instance HavingId Ncc where
+  getId = nccId
+  {-# INLINE getId #-}
+
+instance Eq Ncc where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
 
 -- | Key in nccToks index.
 data OwnerKey = OwnerKey !Tok !(Maybe Wme) deriving Eq
@@ -409,6 +489,7 @@ data OwnerKey = OwnerKey !Tok !(Maybe Wme) deriving Eq
 instance Hashable OwnerKey where
   hashWithSalt salt (OwnerKey parent wme) =
     salt `hashWithSalt` parent `hashWithSalt` wme
+  {-# INLINE hashWithSalt #-}
 
 -- | Ncc partner node.
 data Partner =
@@ -422,8 +503,13 @@ data Partner =
   , partnerBuff     :: !(TVar TokSet)
   }
 
-instance HavingId Partner where getId = partnerId
-instance Eq       Partner where (==)  = eqOnId
+instance HavingId Partner where
+  getId = partnerId
+  {-# INLINE getId #-}
+
+instance Eq Partner where
+  (==)  = eqOnId
+  {-# INLINE (==) #-}
 
 -- | Symbol location describes the binding for a variable within a token.
 data Location = Location !Field !Distance
@@ -443,8 +529,13 @@ data Prod =
   , prodBindings     :: !Bindings
   }
 
-instance HavingId Prod where getId = prodId
-instance Eq       Prod where (==)  = eqOnId
+instance HavingId Prod where
+  getId = prodId
+  {-# INLINE getId #-}
+
+instance Eq Prod where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
 
 -- ACTIONS
 
@@ -463,12 +554,34 @@ type Action = Actx -> STM ()
 
 -- CONDITIONS
 
--- | The condition of a production.
-data Cond = PosCond !Obj !Attr !Val
-          | NegCond !Obj !Attr !Val
-          | NccCond [Cond]
+-- | Positive condition.
+data PosCond = PosCond !Obj !Attr !Val
+
+instance Show PosCond where
+  show (PosCond o a v) = show o ++ " " ++ show a ++ " " ++ show v
+  {-# INLINE show #-}
+
+-- | Negative condition.
+data NegCond = NegCond !Obj !Attr !Val
+
+instance Show NegCond where
+  show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
+  {-# INLINE show #-}
+
+-- | Ncc condition.
+data NccCond = NccCond [Cond]
+
+instance Show NccCond where
+  show (NccCond subs) = "¬ " ++ show subs
+  {-# INLINE show #-}
+
+-- | A generialized condition.
+data Cond = CPosCond !PosCond
+          | CNegCond !NegCond
+          | CNccCond !NccCond
 
 instance Show Cond where
-  show (PosCond o a v) =         show o ++ " " ++ show a ++ " " ++ show v
-  show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
-  show (NccCond conds) = "¬ " ++ show conds
+  show (CPosCond c) = show c
+  show (CNegCond c) = show c
+  show (CNccCond c) = show c
+  {-# INLINE show #-}
