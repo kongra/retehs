@@ -21,7 +21,7 @@ import           Data.Foldable (Foldable, toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
-import           Data.Maybe (fromMaybe)
+import           Data.Maybe (fromMaybe, isJust, fromJust)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (forMM_, toListM, whenM)
 -- import           Kask.Control.Monad (forMM_, toListM, whenM)
@@ -383,7 +383,7 @@ instance TokWmes Ntok where
 instance TokWmes Ptok where
   tokWmes Ptok { ptokWme = wme, ptokParent = p } = wme : tokWmes p
 
--- BMEM
+-- BETA MEMORY
 
 leftActivateBmem :: Env -> Bmem -> Either Dtt Btok -> Wme -> STM ()
 leftActivateBmem env bmem tok wme = do
@@ -458,7 +458,7 @@ amemWmesForIndex k index =
   liftM (Map.lookupDefault Set.empty k) (readTVar index)
 {-# INLINE amemWmesForIndex #-}
 
--- JOIN
+-- JOIN NODES
 
 leftActivateJoin :: Env -> Join -> Btok -> STM ()
 leftActivateJoin env join btok = case joinParent join of
@@ -481,7 +481,8 @@ leftActivateDummyJoin env join btok = do
       -- ... take all Wmes from amem (Dtt from above matches all of them)
       wmes <- toListT (amemWmes amem)
       -- and iterate all wmes over all children left-activating:
-      leftActivateJoinChildren env children btok wmes
+      forM_ wmes $ \wme -> leftActivateJoinChildren
+                           env children (Right btok) (Left (Right btok)) wme
 
 leftActivateStdJoin :: Env -> Join -> Bmem -> Btok -> STM()
 leftActivateStdJoin env join parent btok = do
@@ -500,7 +501,8 @@ leftActivateStdJoin env join parent btok = do
       -- ... take matching Wmes from Amem indexes
       wmes <- matchingAmemWmes (joinTests join) (Left btok) amem
       -- and iterate all wmes over all children left-activating:
-      leftActivateJoinChildren env children btok wmes
+      forM_ wmes $ \wme -> leftActivateJoinChildren
+                           env children (Right btok) (Left (Right btok)) wme
 
 type JoinChildren = (Set.HashSet Bmem, Set.HashSet Neg, Set.HashSet Prod)
 
@@ -517,93 +519,127 @@ nullJoinChildren (bmems, negs, prods) =
   Set.null bmems && Set.null negs  && Set.null prods
 {-# INLINE nullJoinChildren #-}
 
-leftActivateJoinChildren :: Env -> JoinChildren -> Btok -> [Wme] -> STM ()
-leftActivateJoinChildren env (bmems, negs, prods) btok wmes = do
-  let rtok = Right btok
-      ltok = Left  rtok
-  forM_ wmes $ \wme -> do
-    forM_ (toList bmems) $ \bmem -> leftActivateBmem env bmem rtok       wme
-    forM_ (toList negs ) $ \neg ->  leftActivateNeg  env neg  ltok (Just wme)
-    forM_ (toList prods) $ \prod -> leftActivateProd env prod ltok (Just wme)
+leftActivateJoinChildren :: Env -> JoinChildren
+                            -> Either Dtt Btok     -- ^ For Bmem activation.
+                            -> Either JoinTok Ntok -- ^ For Neg/Prod activation.
+                            -> Wme
+                            -> STM ()
+leftActivateJoinChildren env (bmems, negs, prods) rtok ltok wme = do
+  forM_ (toList bmems) $ \bmem -> leftActivateBmem env bmem rtok       wme
+  forM_ (toList negs ) $ \neg ->  leftActivateNeg  env neg  ltok (Just wme)
+  forM_ (toList prods) $ \prod -> leftActivateProd env prod ltok (Just wme)
 {-# INLINE leftActivateJoinChildren #-}
 
 rightActivateJoin :: Env -> Join -> Wme -> STM ()
-rightActivateJoin = undefined
--- rightActivateJoin env join wme = do
---   let parent = joinParent join
+rightActivateJoin env join wme = case joinParent join of
+  Left  _    -> rightActivateDummyJoin env join      wme
+  Right bmem -> rightActivateStdJoin   env join bmem wme
+{-# INLINE rightActivateJoin #-}
 
---   parentTokSet <- joinParentTokSet parent
---   let isParentEmpty = Set.null parentTokSet
+rightActivateDummyJoin :: Env -> Join -> Wme -> STM ()
+rightActivateDummyJoin env join wme = do
+  -- Like in the case of left activation, we skip any U/L proceeding
+  -- here. Dtt always matches any Wme, so there is no need to perform
+  -- any join tests. We simply activate children with Dtt and wme.
+  children <- joinChildren join
+  leftActivateJoinChildren env children (Left Dtt) (Left (Left Dtt)) wme
+{-# INLINE rightActivateDummyJoin #-}
 
---   whenM (isLeftUnlinked join) $ do -- When join.amem just became non-empty.
---     relinkToParent join parent
---     when isParentEmpty (rightUnlink (JoinAmemSuccessor join))
+rightActivateStdJoin :: Env -> Join -> Bmem -> Wme -> STM ()
+rightActivateStdJoin env join parent wme = do
+  parentToks <- readTVar (bmemToks parent)
+  let isParentEmpty = Set.null parentToks
 
---   -- Only when parent has some Toks inside,
---   unless isParentEmpty $ do
---     children <- readTVar (joinChildren join)
---     -- Only when there are some children...
---     unless (Seq.null children) $
---       -- Iterate over parent.toks ...
---       forM_ (toList parentTokSet) $ \tok ->
---         when (performJoinTests (joinTests join) tok wme) $
---           -- ... and JoinChildren performing left activation.
---           forM_ (toList children) $ \child ->
---             leftActivateCondChild env child tok (Just wme)
+  whenM (isLeftUnlinked join) $ do -- When join.amem just became non-empty.
+    relinkToParent join parent
+    when isParentEmpty (rightUnlink (JoinSuccessor join))
 
--- joinParentTokSet :: JoinParent -> STM TokSet
--- joinParentTokSet parent = case parent of
---   DtnJoinParent  Dtn  { dtnTok   = dtt  } -> return (Set.singleton dtt)
---   BmemJoinParent Bmem { bmemToks = toks } -> readTVar toks
--- {-# INLINE joinParentTokSet #-}
+  -- Only when parent has some Toks inside,
+  unless isParentEmpty $ do
+    children <- joinChildren join
+    -- Only when there are some children...
+    unless (nullJoinChildren children) $
+      -- Iterate over parent.toks ...
+      forM_ (toList parentToks) $ \btok ->
+        when (performJoinTests (joinTests join) (Left btok) wme) $
+          -- ... and JoinChildren performing left activation.
+          leftActivateJoinChildren env children
+                                   (Right btok) (Left (Right btok)) wme
 
--- -- NEG
+-- NEGATION NODES
 
 leftActivateNeg :: Env -> Neg -> Either JoinTok Ntok -> Maybe Wme -> STM ()
-leftActivateNeg = undefined
+leftActivateNeg env neg tok wme = do
+  toks <- readTVar (negToks neg)
+  whenM (isRightUnlinked (NegSuccessor neg)) $
+    -- The right-unlinking status above must be checked because a
+    -- negative node is not right unlinked on creation.
+    when (Set.null toks) $ relinkToAmem (NegSuccessor neg)
 
--- leftActivateNeg env neg tok wme = do
---   toks <- readTVar (negToks neg)
---   whenM (isRightUnlinked (NegAmemSuccessor neg)) $
---     -- The right-unlinking status above must be checked because a
---     -- negative node is not right unlinked on creation.
---     when (Set.null toks) $ relinkToAmem (NegAmemSuccessor neg)
+  -- Build a new token and store it just like a Bmem would.
+  id'          <- genid env
+  newChildren  <- newTVar Set.empty
+  newNjResults <- newTVar Set.empty
+  let newTok = Ntok { ntokId             = id'
+                    , ntokWme            = wme
+                    , ntokParent         = tok
+                    , ntokNode           = neg
+                    , ntokChildren       = newChildren
+                    , ntokNegJoinResults = newNjResults }
 
---   -- Build a new token and store it just like a Bmem would.
---   newTok <- makeTok env tok wme (NegTokNode neg)
---   writeTVar (negToks neg) (Set.insert newTok toks)
+  writeTVar (negToks neg) (Set.insert newTok toks)
 
---   let amem = negAmem neg
---   isAmemEmpty <- nullTSet (amemWmes amem)
+  let amem = negAmem neg
+  isAmemEmpty <- nullTSet (amemWmes amem)
 
---   -- Compute the join results (using amem indexes)
---   unless isAmemEmpty $ do
---     wmes <- matchingAmemWmes (negTests neg) newTok amem
---     forM_ wmes $ \w -> do
---       let jr = NegJoinResult newTok w
---       modifyTVar' (tokNegJoinResults newTok) (Set.insert jr)
---       modifyTVar' (wmeNegJoinResults w)      (Set.insert jr)
---       -- In the original Doorenbos pseudo-code there was a bug - wme
---       -- was used instead of w in the 3 lines above.
+  -- Compute the join results (using amem indexes)
+  unless isAmemEmpty $ do
+    wmes <- matchingAmemWmes (negTests neg) (Right newTok) amem
+    forM_ wmes $ \w -> do
+      let jr = NegJoinResult newTok w
+      modifyTVar' (ntokNegJoinResults newTok) (Set.insert jr)
+      modifyTVar' (wmeNegJoinResults  w)      (Set.insert jr)
+      -- In the original Doorenbos pseudo-code there was a bug - wme
+      -- was used instead of w in the 3 lines above.
 
---   -- If join results are empty, then inform children.
---   whenM (nullTSet (tokNegJoinResults newTok)) $
---     forMM_ (toListT (negChildren neg)) $ \child ->
---       leftActivateCondChild env child newTok Nothing
+  -- If join results are empty, then inform children.
+  whenM (nullTSet (ntokNegJoinResults newTok)) $ do
+    children <- negChildren neg
+    unless (nullNegChildren children) $
+      leftActivateNegChildren env children (Right newTok) Nothing
+
+type NegChildren = (Set.HashSet Neg, Set.HashSet Prod)
+
+negChildren :: Neg -> STM NegChildren
+negChildren neg = do
+  negs  <- readTVar (negNegs  neg)
+  prods <- readTVar (negProds neg)
+  return (negs, prods)
+{-# INLINE negChildren #-}
+
+nullNegChildren :: NegChildren -> Bool
+nullNegChildren (negs, prods) = Set.null negs  && Set.null prods
+{-# INLINE nullNegChildren #-}
+
+leftActivateNegChildren :: Env -> NegChildren
+                        -> Either JoinTok Ntok -> Maybe Wme -> STM ()
+leftActivateNegChildren env (negs, prods) tok wme = do
+  forM_ (toList negs ) $ \neg ->  leftActivateNeg  env neg  tok wme
+  forM_ (toList prods) $ \prod -> leftActivateProd env prod tok wme
+{-# INLINE leftActivateNegChildren #-}
 
 rightActivateNeg :: Env -> Neg -> Wme -> STM ()
-rightActivateNeg = undefined
--- rightActivateNeg env neg wme =
---   forMM_ (toListT (negToks neg)) $ \tok ->
---     when (performJoinTests (negTests neg) tok wme) $ do
---       whenM (nullTSet (tokNegJoinResults tok)) $
---         deleteDescendentsOfTok env tok
+rightActivateNeg env neg wme =
+  forMM_ (toListT (negToks neg)) $ \tok ->
+    when (performJoinTests (negTests neg) (Right tok) wme) $ do
+      whenM (nullTSet (ntokNegJoinResults tok)) $
+        deleteDescendentsOfTok env (NegWmeTok tok)
 
---       let jr = NegJoinResult tok wme
---       -- Insert jr into tok.(neg)join-results.
---       modifyTVar' (tokNegJoinResults tok) (Set.insert jr)
---       -- Insert jr into wme.neg-join-results.
---       modifyTVar' (wmeNegJoinResults wme) (Set.insert jr)
+      let jr = NegJoinResult tok wme
+      -- Insert jr into tok.(neg)join-results.
+      modifyTVar' (ntokNegJoinResults tok) (Set.insert jr)
+      -- Insert jr into wme.neg-join-results.
+      modifyTVar' (wmeNegJoinResults  wme) (Set.insert jr)
 
 -- -- PRODUCTION NODES
 
@@ -700,120 +736,123 @@ nodeAmem :: AmemSuccessor -> Amem
 nodeAmem = successorProp joinAmem negAmem
 {-# INLINE nodeAmem #-}
 
--- -- REMOVING WMES
+-- REMOVING WMES
 
--- -- | Removes the fact described by 3 symbols. Returns True on success
--- -- and False when the fact was not present in the system.
--- removeWme :: (Symbolic a, Symbolic b, Symbolic c) =>
---              Env -> a -> b -> c -> STM Bool
--- removeWme env obj attr val = do
---   obj'  <- internedSymbol env obj
---   attr' <- internedSymbol env attr
---   val'  <- internedSymbol env val
+-- | Removes the fact described by 3 symbols. Returns True on success
+-- and False when the fact was not present in the system.
+removeWme :: (Symbolic a, Symbolic b, Symbolic c) =>
+             Env -> a -> b -> c -> STM Bool
+removeWme env obj attr val = do
+  obj'  <- internedSymbol env obj
+  attr' <- internedSymbol env attr
+  val'  <- internedSymbol env val
 
---   if isJust obj' && isJust attr' && isJust val'
---     then removeWmeImpl env
---                        (Obj  (fromJust obj' ))
---                        (Attr (fromJust attr'))
---                        (Val  (fromJust val' ))
+  if isJust obj' && isJust attr' && isJust val'
+    then removeWmeImpl env
+                       (Obj  (fromJust obj' ))
+                       (Attr (fromJust attr'))
+                       (Val  (fromJust val' ))
 
---     -- At least 1 of the names didn't have a corresponding interned
---     -- symbol, the wme can't exist.
---     else return False
+    -- At least 1 of the names didn't have a corresponding interned
+    -- symbol, the wme can't exist.
+    else return False
 
--- -- | Works like 'removeWme' inside an 'Action' (of a production).
--- removeWmeA :: (Symbolic a, Symbolic b, Symbolic c) =>
---               Actx -> a -> b -> c -> STM Bool
--- removeWmeA actx = removeWme (actxEnv actx)
--- {-# INLINE removeWmeA #-}
+-- | Works like 'removeWme' inside an 'Action' (of a production).
+removeWmeA :: (Symbolic a, Symbolic b, Symbolic c) =>
+              Actx -> a -> b -> c -> STM Bool
+removeWmeA actx = removeWme (actxEnv actx)
+{-# INLINE removeWmeA #-}
 
--- removeWmeImpl :: Env -> Obj -> Attr -> Val -> STM Bool
--- removeWmeImpl env obj attr val = do
---   wmes <- readTVar (envWmes env)
---   let k = WmeKey obj attr val
---   case Map.lookup k wmes of
---     Nothing -> return False
---     Just wme -> do
---       -- Remove from Working Memory (Env registry and indexes)
---       writeTVar (envWmes env) $! Map.delete k wmes
---       deleteFromEnvIndexes env wme
---       -- ... and propagate down the network.
---       propagateWmeRemoval env wme obj attr val
---       return True
--- {-# INLINE removeWmeImpl #-}
+removeWmeImpl :: Env -> Obj -> Attr -> Val -> STM Bool
+removeWmeImpl env obj attr val = do
+  wmes <- readTVar (envWmes env)
+  let k = WmeKey obj attr val
+  case Map.lookup k wmes of
+    Nothing -> return False
+    Just wme -> do
+      -- Remove from Working Memory (Env registry and indexes)
+      writeTVar (envWmes env) $! Map.delete k wmes
+      deleteFromEnvIndexes env wme
+      -- ... and propagate down the network.
+      propagateWmeRemoval env wme obj attr val
+      return True
+{-# INLINE removeWmeImpl #-}
 
--- propagateWmeRemoval :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
--- propagateWmeRemoval env wme obj attr val = do
---   -- For every amem this wme belongs to ...
---   forMM_ (readTVar (wmeAmems wme)) $ \amem -> do
---     -- ... remove wme from amem indexes.
---     modifyTVar' (amemWmesByObj  amem) (wmesIndexDelete obj  wme)
---     modifyTVar' (amemWmesByAttr amem) (wmesIndexDelete attr wme)
---     modifyTVar' (amemWmesByVal  amem) (wmesIndexDelete val  wme)
---     wmes <- readTVar (amemWmes amem)
---     let updatedWmes = Set.delete wme wmes
---     writeTVar (amemWmes amem) updatedWmes
+propagateWmeRemoval :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
+-- propagateWmeRemoval = undefined
 
---     when (Set.null updatedWmes) $ -- Amem just became empty, so ...
---       -- ... left-unlink all Join successors.
---       forMM_ (toListT (amemSuccessors amem)) $ \s ->
---         case s of
---           JoinAmemSuccessor join -> leftUnlink join
---           NegAmemSuccessor  _    -> return ()
+propagateWmeRemoval env wme obj attr val = do
+  -- For every amem this wme belongs to ...
+  forMM_ (readTVar (wmeAmems wme)) $ \amem -> do
+    -- ... remove wme from amem indexes.
+    modifyTVar' (amemWmesByObj  amem) (wmesIndexDelete obj  wme)
+    modifyTVar' (amemWmesByAttr amem) (wmesIndexDelete attr wme)
+    modifyTVar' (amemWmesByVal  amem) (wmesIndexDelete val  wme)
+    wmes <- readTVar (amemWmes amem)
+    let updatedWmes = Set.delete wme wmes
+    writeTVar (amemWmes amem) updatedWmes
 
---   -- Delete all tokens wme is in. We remove every token from it's
---   -- parent token but avoid removing from wme.
---   forMM_ (toListT (wmeToks wme)) $ \tok ->
---     deleteTokAndDescendents env tok RemoveFromParent DontRemoveFromWme
+    when (Set.null updatedWmes) $ -- Amem just became empty, so ...
+      -- ... left-unlink all Join successors.
+      forMM_ (toListT (amemSuccessors amem)) $ \s ->
+        case s of
+          JoinSuccessor join -> case joinParent join of
+            Right bmem -> leftUnlink join bmem
+            Left  _    -> return () -- Do not unlink from Dtn.
 
---   -- For every jr in wme.negative-join-results ...
---   forMM_ (toListT (wmeNegJoinResults wme)) $ \jr -> do
---     -- ... remove jr from jr.owner.negative-join-results.
---     let owner = njrOwner jr
---     jresults <- readTVar (tokNegJoinResults owner)
---     let updatedJresults = Set.delete jr jresults
---     writeTVar (tokNegJoinResults owner) updatedJresults
+          NegSuccessor  _    -> return ()
 
---     -- If jr.owner.negative-join-results is nil
---     when (Set.null updatedJresults) $
---       leftActivateOwnerNodeChildren env owner
--- {-# INLINE propagateWmeRemoval #-}
+  -- Delete all tokens wme is in. We remove every token from it's
+  -- parent token but avoid removing from wme.
+  forMM_ (toListT (wmeToks wme)) $ \tok ->
+    deleteTokAndDescendents env tok RemoveFromParent DontRemoveFromWme
 
--- leftActivateOwnerNodeChildren :: Env -> Tok -> STM ()
--- leftActivateOwnerNodeChildren env owner = case tokNode owner of
---   DtnTokNode dtn -> forMM_ (toListT (dtnChildren dtn)) $ \child ->
---     leftActivateCondNode env child owner Nothing
+  -- For every jr in wme.negative-join-results ...
+  forMM_ (toListT (wmeNegJoinResults wme)) $ \jr -> do
+    -- ... remove jr from jr.owner.negative-join-results.
+    let owner = njrOwner jr
+    jresults <- readTVar (ntokNegJoinResults owner)
+    let updatedJresults = Set.delete jr jresults
+    writeTVar (ntokNegJoinResults owner) updatedJresults
 
---   NegTokNode neg -> forMM_ (toListT (negChildren neg)) $ \child ->
---     leftActivateCondChild env child owner Nothing
+    -- If jr.owner.negative-join-results is nil
+    when (Set.null updatedJresults) $
+      leftActivateOwnerNodeChildren env owner
+{-# INLINE propagateWmeRemoval #-}
 
---   NccTokNode ncc -> forMM_ (toListT (nccChildren ncc)) $ \child ->
---     leftActivateCondChild env child owner Nothing
+leftActivateOwnerNodeChildren :: Env -> Ntok -> STM ()
+leftActivateOwnerNodeChildren = undefined
 
---   BmemTokNode bmem -> forMM_ (toListT (bmemChildren bmem)) $ \join ->
---     leftActivateJoin env join owner
+-- DELETING TOKS
 
---   PartnerTokNode _    -> error "PANIC (5): Partner CAN'T BE AN owner.node."
---   ProdTokNode    _    -> error "PANIC (6): Prod CAN'T BE AN owner.node."
--- {-# INLINE leftActivateOwnerNodeChildren #-}
-
--- -- DELETING TOKS
-
--- data TokTokPolicy = RemoveFromParent | DontRemoveFromParent deriving Eq
--- data TokWmePolicy = RemoveFromWme    | DontRemoveFromWme    deriving Eq
+data TokTokPolicy = RemoveFromParent | DontRemoveFromParent deriving Eq
+data TokWmePolicy = RemoveFromWme    | DontRemoveFromWme    deriving Eq
 
 -- -- | Deletes the descendents of the passed token.
--- deleteDescendentsOfTok :: Env -> Tok -> STM ()
--- deleteDescendentsOfTok env tok = do
---   children <- readTVar (tokChildren tok)
---   unless (Set.null children) $ do
---     writeTVar (tokChildren tok) $! Set.empty
---     -- Iteratively remove, skip removing from parent.
---     forM_ (toList children) $ \child ->
---       deleteTokAndDescendents env child DontRemoveFromParent RemoveFromWme
+deleteDescendentsOfTok :: Env -> WmeTok -> STM ()
+deleteDescendentsOfTok env tok = case tok of
+  BmemWmeTok btok -> do
+    children <- readTVar (btokChildren btok)
+    unless (Set.null children) $ do
+      writeTVar (btokChildren btok) Set.empty
+      forM_ (toList children) $ \child ->
+        deleteTokAndDescendents env child DontRemoveFromParent RemoveFromWme
 
--- -- | Deletes the token and it's descendents.
--- deleteTokAndDescendents :: Env -> Tok -> TokTokPolicy -> TokWmePolicy -> STM ()
+  NegWmeTok ntok -> do
+    children <- readTVar (ntokChildren ntok)
+    unless (Set.null children) $ do
+      writeTVar (ntokChildren ntok) Set.empty
+      forM_ (toList children) $ \child -> do
+        let c = case child of
+              Left  nt -> NegWmeTok  nt
+              Right pt -> ProdWmeTok pt
+        deleteTokAndDescendents env c DontRemoveFromParent RemoveFromWme
+
+  ProdWmeTok _ -> return () -- No children, do nothing.
+
+-- | Deletes the token and it's descendents.
+deleteTokAndDescendents :: Env -> WmeTok -> TokTokPolicy -> TokWmePolicy -> STM ()
+deleteTokAndDescendents = undefined
 -- deleteTokAndDescendents env tok tokPolicy wmePolicy = do
 --   deleteDescendentsOfTok env tok
 --   removeTokFromItsNode   tok
