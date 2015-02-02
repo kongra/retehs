@@ -104,7 +104,7 @@ instance Hashable Symbol where
 
 -- ENVIRONMENT
 
--- | Environment. Contains a global context for running algorithm.
+-- | Environment. Contains a global context for running Rete.
 data Env =
   Env
   {
@@ -131,7 +131,7 @@ data Env =
     -- | Productions the Env knows about.
   , envProds :: !(TVar (Set.HashSet Prod))
 
-    -- | Dummy Top Node.
+    -- | The Dummy Top Node.
   , envDtn :: !Dtn
   }
 
@@ -176,8 +176,7 @@ data Field = O | A | V deriving (Show, Eq)
 
 -- WMES
 
-type WmeSet            = Set.HashSet Wme
-type WmesIndex a       = Map.HashMap a WmeSet
+type WmesIndex a       = Map.HashMap a (Set.HashSet Wme)
 type WmesByObj         = WmesIndex Obj
 type WmesByAttr        = WmesIndex Attr
 type WmesByVal         = WmesIndex Val
@@ -196,10 +195,10 @@ data Wme =
   , wmeAmems :: !(TVar [Amem])
 
     -- | Toks with tokenWme = this Wme.
-  , wmeToks :: !(TVar TokSet)
+  , wmeToks :: !(TVar (Set.HashSet WmeTok))
 
     -- | Negative join results in which this Wme participates.
-  , wmeNegJoinResults :: !(TVar NegJoinResultSet)
+  , wmeNegJoinResults :: !(TVar (Set.HashSet NegJoinResult))
   }
 
 instance Show Wme where
@@ -227,21 +226,61 @@ instance Hashable WmeKey where
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
   {-# INLINE hashWithSalt #-}
 
--- TOKS (TOKENS)
+-- TOKENS
 
-type TokSet           = Set.HashSet Tok
-type NegJoinResultSet = Set.HashSet NegJoinResult
+-- | Dummy Top Token.
+data Dtt = Dtt
 
-data TokNode = DtnTokNode     !Dtn
-             | BmemTokNode    !Bmem
-             | NegTokNode     !Neg
-             | NccTokNode     !Ncc
-             | PartnerTokNode !Partner
-             | ProdTokNode    !Prod
+-- | Beta memory token.
+data Btok =
+  Btok
+  {
+    btokId       :: !Id
+  , btokWme      :: !Wme
+  , btokParent   :: !(Either Dtt Btok)
+  , btokNode     :: !Bmem
+  , btokChildren :: !(TVar (Set.HashSet WmeTok))
+  }
+
+instance HavingId Btok where
+  getId = btokId
+  {-# INLINE getId #-}
+
+instance Eq Btok where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Btok where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
+
+-- | Negation node token.
+data Ntok =
+  Ntok
+  {
+    ntokId             :: !Id
+  , ntokWme            :: !(Maybe Wme)
+  , ntokParent         :: !(Either JoinTok Ntok)
+  , ntokNode           :: !Neg
+  , ntokChildren       :: !(TVar (Set.HashSet (Either Ntok Ptok)))
+  , ntokNegJoinResults :: !(TVar (Set.HashSet NegJoinResult))
+  }
+
+instance HavingId Ntok where
+  getId = ntokId
+  {-# INLINE getId #-}
+
+instance Eq Ntok where
+  (==) = eqOnId
+  {-# INLINE (==) #-}
+
+instance Hashable Ntok where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- | Negative join result.
 data NegJoinResult =
-  NegJoinResult { njrOwner :: !Tok
+  NegJoinResult { njrOwner :: !Ntok
                 , njrWme   :: !Wme } deriving Eq
 
 instance Hashable NegJoinResult where
@@ -249,49 +288,36 @@ instance Hashable NegJoinResult where
     salt `hashWithSalt` owner `hashWithSalt` wme
   {-# INLINE hashWithSalt #-}
 
--- | Token.
-data Tok =
-  Tok
+-- | Production node token.
+data Ptok =
+  Ptok
   {
-    -- | Identifier of the token.
-    tokId :: !Id
-
-    -- | Points to a 'higher' token. Nothing for Dtt.
-  , tokParent :: !(Maybe Tok)
-
-    -- | Wme of this Tok, Nothing for some toks.
-  , tokWme :: !(Maybe Wme)
-
-    -- | The node the token is in.
-  , tokNode :: !TokNode
-
-    -- | Toks with parent = this.
-  , tokChildren :: !(TVar TokSet)
-
-    -- | Used only for Toks in negative nodes.
-  , tokNegJoinResults :: !(TVar NegJoinResultSet)
-
-    -- | Similar to tokNegJoinResults but for NCC nodes.
-  , tokNccResults :: !(TVar TokSet)
-
-    -- | On Toks in NCC partners: toks in whose local memory this
-    -- result resides.
-  , tokOwner :: !(TVar (Maybe Tok))
+    ptokId     :: !Id
+  , ptokWme    :: !(Maybe Wme)
+  , ptokParent :: !(Either JoinTok Ntok)
+  , ptokNode   :: !Prod
   }
 
-instance HavingId Tok where
-  getId = tokId
+instance HavingId Ptok where
+  getId = ptokId
   {-# INLINE getId #-}
 
-instance Eq Tok where
+instance Eq Ptok where
   (==) = eqOnId
   {-# INLINE (==) #-}
 
-instance Hashable Tok where
+instance Hashable Ptok where
   hashWithSalt = hashWithId
   {-# INLINE hashWithSalt #-}
 
--- AMEM (ALPHA MEMORY)
+-- | A token potentially holding a Wme.
+data WmeTok = BmemWmeTok !Btok
+            | NegWmeTok  !Ntok
+            | ProdWmeTok !Ptok
+
+type JoinTok = Either Dtt Btok
+
+-- ALPHA MEMORY
 
 -- | Alpha Memory.
 data Amem =
@@ -304,7 +330,7 @@ data Amem =
   , amemReferenceCount :: !(TVar Int)
 
     -- | The wmes in this Amem (unindexed).
-  , amemWmes :: !(TVar WmeSet)
+  , amemWmes :: !(TVar (Set.HashSet Wme))
 
     -- | Wmes are indexed by their Field value.
   , amemWmesByObj  :: !(TVar WmesByObj)
@@ -328,43 +354,18 @@ instance Hashable Amem where
     salt `hashWithSalt` obj `hashWithSalt` attr `hashWithSalt` val
   {-# INLINE hashWithSalt #-}
 
--- GENERALIZED NODES
-
 -- | Amem successor. May also be used to represent nodes holding a
 -- reference to an Amem.
-data AmemSuccessor = JoinAmemSuccessor !Join
-                   | NegAmemSuccessor  !Neg  deriving Eq
+data AmemSuccessor = JoinSuccessor !Join
+                   | NegSuccessor  !Neg deriving Eq
 
--- | Represents the nodes that occur as results of building the network
--- structure for various types of conditions.
-data CondNode = PosCondNode !Join
-              | NegCondNode !Neg
-              | NccCondNode !Ncc  deriving Eq
+-- BETA NETWORK NODES
 
--- | A special case of CondNode that adds a Dtn extension.
-data CondNodeWithDtn = DtnCondNode !Dtn
-                     | StdCondNode !CondNode
-
--- | Type of nodes that are children of CondNodes.
-data CondChild = BmemCondChild    !Bmem
-               | NegCondChild     !Neg
-               | NccCondChild     !Ncc
-               | PartnerCondChild !Partner
-               | ProdCondChild    !Prod
-
--- PARTICULAR NODES
-
--- | A singleton (within Env) Dummy Top Node.
+-- | Dummy Top Node
 data Dtn =
   Dtn
   {
-    dtnTok :: !Tok -- ^ Dummy Top Token
-
-  , dtnAllJoins :: !(TVar (Set.HashSet Join))
-  , dtnAllNegs  :: !(TVar (Set.HashSet Neg))
-  , dtnAllNccs  :: !(TVar (Set.HashSet Ncc))
-
-  , dtnChildren :: !(TVar (Seq.Seq CondNode))
+    dtnAllChildren :: !(TVar (Set.HashSet Join))
   }
 
 -- | Beta Memory.
@@ -372,15 +373,10 @@ data Bmem =
   Bmem
   {
     bmemId          :: !Id
-  , bmemParent      :: !CondNode
-
-    -- Bmem is the only type of node where the children ordering
-    -- doesn't matter. In other nodes we must keep the ordering due to
-    -- Ncc subnetwork issues.
+  , bmemParent      :: !Join
   , bmemChildren    :: !(TVar (Set.HashSet Join))
-
   , bmemAllChildren :: !(TVar (Set.HashSet Join))
-  , bmemToks        :: !(TVar TokSet)
+  , bmemToks        :: !(TVar (Set.HashSet Btok))
   }
 
 instance HavingId Bmem where
@@ -390,6 +386,10 @@ instance HavingId Bmem where
 instance Eq Bmem where
   (==) = eqOnId
   {-# INLINE (==) #-}
+
+instance Hashable Bmem where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
 
 -- | Distance within lists of Toks or Conds.
 type Distance = Int
@@ -404,28 +404,22 @@ data JoinTest =
   }
   deriving Eq
 
--- | Parent node of a Join node.
-data JoinParent = BmemJoinParent !Bmem | DtnJoinParent !Dtn
-
--- | Right-unlinked flag.
-newtype RightUnlinked = RightUnlinked Bool
-
--- | Left-unlinked flag.
-newtype LeftUnlinked = LeftUnlinked Bool
-
--- | Join Node.
+-- | Join node.
 data Join =
   Join
   {
     joinId              :: !Id
-  , joinParent          :: !JoinParent
-  , joinChildren        :: !(TVar (Seq.Seq CondChild))
+  , joinParent          :: !(Either Dtn Bmem)
+
+  , joinBmems           :: !(TVar (Set.HashSet Bmem))
+  , joinNegs            :: !(TVar (Set.HashSet Neg))
+  , joinProds           :: !(TVar (Set.HashSet Prod))
 
   , joinAmem            :: !Amem
   , joinNearestAncestor :: !(Maybe AmemSuccessor)
   , joinTests           :: ![JoinTest]
-  , joinLeftUnlinked    :: !(TVar LeftUnlinked)
-  , joinRightUnlinked   :: !(TVar RightUnlinked)
+  , joinLeftUnlinked    :: !(TVar Bool)
+  , joinRightUnlinked   :: !(TVar Bool)
   }
 
 instance HavingId Join where
@@ -445,14 +439,16 @@ data Neg =
   Neg
   {
     negId              :: !Id
-  , negParent          :: !CondNodeWithDtn
-  , negChildren        :: !(TVar (Seq.Seq CondChild))
+  , negParent          :: !(Either Join Neg)
 
-  , negToks            :: !(TVar TokSet)
+  , negNegs            :: !(TVar (Set.HashSet Neg))
+  , negProds           :: !(TVar (Set.HashSet Prod))
+
+  , negToks            :: !(TVar (Set.HashSet Ntok))
   , negAmem            :: !Amem
   , negTests           :: ![JoinTest]
   , negNearestAncestor :: !(Maybe AmemSuccessor)
-  , negRightUnlinked   :: !(TVar RightUnlinked)
+  , negRightUnlinked   :: !(TVar Bool)
   }
 
 instance HavingId Neg where
@@ -463,53 +459,9 @@ instance Eq Neg where
   (==) = eqOnId
   {-# INLINE (==) #-}
 
--- | Ncc node.
-data Ncc =
-  Ncc
-  {
-    nccId       :: !Id
-  , nccParent   :: !CondNodeWithDtn
-  , nccChildren :: !(TVar (Seq.Seq CondChild))
-
-  , nccToks      :: !(TVar (Map.HashMap OwnerKey Tok))
-  , nccPartner  :: !Partner
-  }
-
-instance HavingId Ncc where
-  getId = nccId
-  {-# INLINE getId #-}
-
-instance Eq Ncc where
-  (==) = eqOnId
-  {-# INLINE (==) #-}
-
--- | Key in nccToks index.
-data OwnerKey = OwnerKey !Tok !(Maybe Wme) deriving Eq
-
-instance Hashable OwnerKey where
-  hashWithSalt salt (OwnerKey parent wme) =
-    salt `hashWithSalt` parent `hashWithSalt` wme
+instance Hashable Neg where
+  hashWithSalt = hashWithId
   {-# INLINE hashWithSalt #-}
-
--- | Ncc partner node.
-data Partner =
-  Partner
-  {
-    partnerId       :: !Id
-  , partnerParent   :: !CondNode
-
-  , partnerNcc      :: !Ncc
-  , partnerConjucts :: !Int
-  , partnerBuff     :: !(TVar TokSet)
-  }
-
-instance HavingId Partner where
-  getId = partnerId
-  {-# INLINE getId #-}
-
-instance Eq Partner where
-  (==)  = eqOnId
-  {-# INLINE (==) #-}
 
 -- | Symbol location describes the binding for a variable within a token.
 data Location = Location !Field !Distance
@@ -522,8 +474,8 @@ data Prod =
   Prod
   {
     prodId           :: !Id
-  , prodParent       :: !CondNode
-  , prodToks         :: !(TVar TokSet)
+  , prodParent       :: !(Either Join Neg)
+  , prodToks         :: !(TVar (Set.HashSet Ptok))
   , prodAction       :: !Action
   , prodRevokeAction :: !(Maybe Action)
   , prodBindings     :: !Bindings
@@ -545,8 +497,8 @@ data Actx =
   {
     actxEnv  :: !Env         -- ^ Current Env
   , actxProd :: !Prod        -- ^ Production node
-  , actxTok  :: !Tok         -- ^ The matching token
-  , actxWmes :: [Maybe Wme]  -- ^ The token Wmes
+  , actxTok  :: !Ptok        -- ^ The matching token
+  , actxWmes :: ![Maybe Wme] -- ^ Wmes of the matching token
   }
 
 -- | Action of a production.
@@ -566,22 +518,4 @@ data NegCond = NegCond !Obj !Attr !Val
 
 instance Show NegCond where
   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v
-  {-# INLINE show #-}
-
--- | Ncc condition.
-data NccCond = NccCond [Cond]
-
-instance Show NccCond where
-  show (NccCond subs) = "¬ " ++ show subs
-  {-# INLINE show #-}
-
--- | A generialized condition.
-data Cond = CPosCond !PosCond
-          | CNegCond !NegCond
-          | CNccCond !NccCond
-
-instance Show Cond where
-  show (CPosCond c) = show c
-  show (CNegCond c) = show c
-  show (CNccCond c) = show c
   {-# INLINE show #-}

@@ -1,0 +1,57 @@
+| NODE TYPE | CHILDREN        | PARENTS   |
+|-----------+-----------------+-----------|
+| Dtn       | Join            |           |
+| Bmem      | Join            | Join      |
+| Join      | Bmem, Neg, Prod | Dtn, Bmem |
+| Neg       | Neg, Prod       | Join, Neg |
+| Prod      |                 | Join, Neg |
+
+
+prod :: PosCond -> PosConds -> NegConds -> Then -> Revoke -> STM ()
+
+newtype PosConds = PosConds [PosCond]
+newtype NegConds = NegConds [NegCond]
+
+newtype Then = Then Action
+data Revoke  = Revoke Action | Pass
+
+prod (c   "x" "on"    "y")
+   [ (c   "w" "at"    "b")
+   , (c   "g" "with"  "a")
+   , (c   "g" "below" "z")]
+   [ (not "z" "from"  "w")]
+
+   (then   action)
+   (revoke action)
+
+prod (c   "x" "on"    "y")
+   []
+   [ (not "z" "from"  "w")]
+
+   (then   action)
+   (norevoke)
+
+* Tworzenie struktury sieci
+  1. Węzłem początkowym jest Dtn. Jego dzieckiem jest Join od
+     pierwszego PosCond.
+  2. Kolejno następują pary Bmem + Join od kolejnych PosConds (o ile
+     takowe występują).
+  3. Kolejno następują węzły Neg, o ile mamy wyrażenia NegConds.
+  4. Pod ostatnim Joinem lub Neg doczepiany jest węzeł Prod.
+
+* Amem.successors musi być uporządkowana
+
+* Kolejność węzłów-dzieci nie ma znaczenia
+
+* Dtt - Dummy Top Token
+  Przyjmujemy założenie, że Dtt jest wyłącznie figurą
+  retoryczną. Tworząc nowy token, którego rodzicem jest Dtt, nie
+  dodajemy tego nowego tokena do zbioru dzieci Dtt (nie utrzymujemy go
+  w Dtt). Nie jest to konieczne, ponieważ Dtt nigdy nie podlega
+  usuwaniu.
+
+* Gdzie powstają Tokeny ?
+  - Singleton Dtt skojarzony z Dtn (nie ma Wme)
+  - BmemTok w Bmem (ma Wme)
+  - NegTok  w Neg  (ma Maybe Wme, ma negJoinResults)
+  - ProdTok w Prod (ma Maybe Wme)
