@@ -85,7 +85,7 @@ createEnv = do
   amems        <- newTVar Map.empty
   prods        <- newTVar Set.empty
 
-  dtnChildren  <- newTVar Set.empty
+  dtnChildren  <- newTVar Map.empty
 
   -- Let's create Env.
   return Env { envIdState    = idState
@@ -524,19 +524,19 @@ leftActivateStdJoin env join parent btok = do
       forM_ wmes $ \wme -> leftActivateJoinChildren
                            env children (Right btok) (Left (Right btok)) wme
 
-type JoinChildren = (Maybe Bmem, Set.HashSet Neg, Set.HashSet Prod)
+type JoinChildren = (Maybe Bmem, [Neg], [Prod])
 
 joinChildren :: Join -> STM JoinChildren
 joinChildren join = do
   bmem  <- readTVar (joinBmem  join)
   negs  <- readTVar (joinNegs  join)
   prods <- readTVar (joinProds join)
-  return (bmem, negs, prods)
+  return (bmem, Map.elems negs, toList prods)
 {-# INLINE joinChildren #-}
 
 nullJoinChildren :: JoinChildren -> Bool
 nullJoinChildren (bmem, negs, prods) =
-  isNothing bmem && Set.null negs  && Set.null prods
+  isNothing bmem && null negs  && null prods
 {-# INLINE nullJoinChildren #-}
 
 leftActivateJoinChildren :: Env -> JoinChildren
@@ -545,12 +545,9 @@ leftActivateJoinChildren :: Env -> JoinChildren
                             -> Wme
                             -> STM ()
 leftActivateJoinChildren env (bmem, negs, prods) rtok ltok wme = do
-  case bmem of
-    Nothing    -> return ()
-    Just bmem' -> leftActivateBmem env bmem' rtok wme
-
-  forM_ (toList negs ) $ \neg ->  leftActivateNeg  env neg  ltok (Just wme)
-  forM_ (toList prods) $ \prod -> leftActivateProd env prod ltok (Just wme)
+  when (isJust bmem)  $  leftActivateBmem env (fromJust bmem) rtok       wme
+  forM_ negs  $ \neg  -> leftActivateNeg  env neg             ltok (Just wme)
+  forM_ prods $ \prod -> leftActivateProd env prod            ltok (Just wme)
 {-# INLINE leftActivateJoinChildren #-}
 
 rightActivateJoin :: Env -> Join -> Wme -> STM ()
@@ -631,24 +628,24 @@ leftActivateNeg env neg tok wme = do
     unless (nullNegChildren children) $
       leftActivateNegChildren env children (Right newTok) Nothing
 
-type NegChildren = (Set.HashSet Neg, Set.HashSet Prod)
+type NegChildren = ([Neg], [Prod])
 
 negChildren :: Neg -> STM NegChildren
 negChildren neg = do
   negs  <- readTVar (negNegs  neg)
   prods <- readTVar (negProds neg)
-  return (negs, prods)
+  return (Map.elems negs, toList prods)
 {-# INLINE negChildren #-}
 
 nullNegChildren :: NegChildren -> Bool
-nullNegChildren (negs, prods) = Set.null negs  && Set.null prods
+nullNegChildren (negs, prods) = null negs  && null prods
 {-# INLINE nullNegChildren #-}
 
 leftActivateNegChildren :: Env -> NegChildren
                         -> Either JoinTok Ntok -> Maybe Wme -> STM ()
 leftActivateNegChildren env (negs, prods) tok wme = do
-  forM_ (toList negs ) $ \neg ->  leftActivateNeg  env neg  tok wme
-  forM_ (toList prods) $ \prod -> leftActivateProd env prod tok wme
+  forM_ negs  $ \neg  -> leftActivateNeg  env neg  tok wme
+  forM_ prods $ \prod -> leftActivateProd env prod tok wme
 {-# INLINE leftActivateNegChildren #-}
 
 rightActivateNeg :: Env -> Neg -> Wme -> STM ()

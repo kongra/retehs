@@ -17,12 +17,13 @@ module AI.Rete.Net where
 import           AI.Rete.Data
 import           AI.Rete.Flow
 import           Control.Concurrent.STM
-import           Control.Monad (forM_, liftM)
+import           Control.Monad (forM_, liftM, unless)
 import           Data.Foldable (toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Maybe (isJust, fromJust)
 import qualified Data.Sequence as Seq
+import           Kask.Control.Monad (whenM)
 import           Safe (headMay)
 -- -- import           Data.Hashable (Hashable)
 -- -- import           Kask.Control.Monad (mapMM_, forMM_, toListM, whenM)
@@ -115,9 +116,9 @@ buildOrShareBmem env parent = do
     Just bmem -> return bmem  -- Happily found.
     Nothing   -> do
       -- Create new Bmem.
-      id'         <- genid env
+      id'         <- genid   env
       children    <- newTVar Set.empty
-      allChildren <- newTVar Set.empty
+      allChildren <- newTVar Map.empty
       toks        <- newTVar Set.empty
 
       let bmem = Bmem { bmemId          = id'
@@ -218,58 +219,153 @@ instance FindAncestor Neg AmemSuccessor where
     else findAncestor (negParent neg) amem
 
 instance FindAncestor (Either Join Neg) AmemSuccessor where
-  findAncestor (Left join) amem = liftM JoinSuccessor (findAncestor join amem)
-  findAncestor (Right neg) amem = findAncestor neg amem
+  findAncestor (Left  join) amem = liftM JoinSuccessor (findAncestor join amem)
+  findAncestor (Right neg ) amem = findAncestor neg amem
 
--- -- JOIN CREATION
+instance FindAncestor Bmem Join where
+  findAncestor bmem = findAncestor (bmemParent bmem)
 
--- -- buildOrShareJoinNode :: Env -> Node -> Amem -> [JoinTest] -> STM Node
--- -- buildOrShareJoinNode env parent amem tests = do
+-- JOIN CREATION
 
--- --   undefined
+buildOrShareDummyJoin :: Env -> Dtn -> Amem -> [JoinTest] -> STM Join
+buildOrShareDummyJoin env parent amem tests = do
+  -- Search for an existing dummy Join to share.
+  allChildren <- readTVar (dtnAllChildren parent)
+  let k = AmemSuccessorKey amem tests
+  case Map.lookup k allChildren of
+    Just join -> return join  -- Happily found.
+    Nothing   -> do
+      -- Let's build a new one.
+      id'   <- genid   env
+      bmem  <- newTVar Nothing
+      negs  <- newTVar Map.empty
+      prods <- newTVar Set.empty
+      -- We consequently assume that there is no U/L of a dummy Join.
+      lu    <- newTVar False
+      ru    <- newTVar False
 
---   -- -- parent is always a β-memory, so below it's safe
---   -- allParentChildren <- rvprop bmemAllChildren parent
---   -- let matchingOneOf = headMay
---   --                     . filter (isShareableJoinNode amem tests)
---   --                     . Set.toList
---   -- case matchingOneOf allParentChildren of
---   --   Just node -> return node
---   --   Nothing   -> do
---   --     -- Establish the unlinking stuff ...
---   --     unlinkRight <- nullTSet (vprop nodeToks parent)
---   --     ru          <- newTVar unlinkRight
---   --     -- ... unlinking left only if the right ul. was not applied.
---   --     unlinkLeft'    <- nullTSet (amemWmes amem)
---   --     let unlinkLeft = not unlinkRight && unlinkLeft'
---   --     lu             <- newTVar unlinkLeft
+      let join = Join { joinId              = id'
+                      , joinParent          = Left parent
+                      , joinBmem            = bmem
+                      , joinNegs            = negs
+                      , joinProds           = prods
+                      , joinAmem            = amem
+                      , joinNearestAncestor = Nothing
+                      , joinTests           = tests
+                      , joinLeftUnlinked    = lu
+                      , joinRightUnlinked   = ru }
 
---   --     -- Create new node with JoinNode variant
---   --     let ancestor = findNearestAncestorWithSameAmem parent amem
---   --     node <- newNode env parent
---   --             JoinNode { nodeAmem                    = amem
---   --                      , nearestAncestorWithSameAmem = ancestor
---   --                      , joinTests                   = tests
---   --                      , leftUnlinked                = lu
---   --                      , rightUnlinked               = ru }
+      -- Add node to parent.allChildren.
+      writeTVar (dtnAllChildren parent) $! Map.insert k join allChildren
 
---   --     -- Add node to parent.allChildren
---   --     writeTVar (vprop bmemAllChildren parent) $!
---   --       Set.insert node allParentChildren
+      -- Add to front of amem.successors.
+      modifyTVar' (amemSuccessors amem) (JoinSuccessor join Seq.<|)
 
---   --     -- Increment amem.reference-count
---   --     modifyTVar' (amemReferenceCount amem) (+1)
+      -- Increment amem.referenceCount.
+      modifyTVar' (amemReferenceCount amem) (+1)
 
---   --     unless unlinkRight $
---   --       -- Insert node at the head of amem.successors
---   --       modifyTVar' (amemSuccessors amem) (node Seq.<|)
+      return join
 
---   --     unless unlinkLeft $
---   --       -- Add node (to the head) of parent.children
---   --       modifyTVar' (nodeChildren parent) (node Seq.<|)
+buildOrShareJoin :: Env -> Bmem -> Amem -> [JoinTest] -> STM Join
+buildOrShareJoin env parent amem tests = do
+  -- Search for an existing Join to share.
+  allChildren <- readTVar (bmemAllChildren parent)
+  let k = AmemSuccessorKey amem tests
+  case Map.lookup k allChildren of
+    Just join -> return join  -- Happily found.
+    Nothing   -> do
+      -- Let's build a new one.
+      id'            <- genid    env
+      bmem           <- newTVar  Nothing
+      -- Establish the unlinking stuff ...
+      unlinkRight    <- nullTSet (bmemToks parent)
+      ru             <- newTVar  unlinkRight
+      -- ... unlinking left only if the right ul. was not applied.
+      unlinkLeft'    <- nullTSet (amemWmes amem)
+      let unlinkLeft = not unlinkRight && unlinkLeft'
+      lu             <- newTVar  unlinkLeft
+
+      negs           <- newTVar  Map.empty -- Moved these lines from above
+      prods          <- newTVar  Set.empty -- to cheat on hlint (duplication) :).
+
+      let join = Join { joinId              = id'
+                      , joinParent          = Right parent
+                      , joinBmem            = bmem
+                      , joinNegs            = negs
+                      , joinProds           = prods
+                      , joinAmem            = amem
+                      , joinNearestAncestor = findAncestor parent amem
+                      , joinTests           = tests
+                      , joinLeftUnlinked    = lu
+                      , joinRightUnlinked   = ru }
+
+      -- Add node to parent.allChildren.
+      writeTVar (bmemAllChildren parent) $! Map.insert k join allChildren
+
+      -- Increment amem.referenceCount.
+      modifyTVar' (amemReferenceCount amem) (+1)
+
+      unless unlinkRight $
+        -- Add to front of amem.successors.
+        modifyTVar' (amemSuccessors amem) (JoinSuccessor join Seq.<|)
+
+      unless unlinkLeft $
+        -- Add to parent.children.
+        modifyTVar' (bmemChildren parent) (Set.insert join)
+
+      return join
+
+-- NEG CREATION
+
+buildOrShareNeg :: Env -> Either Join Neg -> Amem -> [JoinTest] -> STM Neg
+buildOrShareNeg env parent amem tests = do
+  let childrenVar = case parent of
+        Left  join -> joinNegs join
+        Right neg  -> negNegs  neg
+
+  children <- readTVar childrenVar
+  let k = AmemSuccessorKey amem tests
+  case Map.lookup k children of
+    Just neg -> return neg  -- Happily found.
+    Nothing  -> do
+      -- Let's build a new one.
+      id'   <- genid   env
+      negs  <- newTVar Map.empty
+      prods <- newTVar Set.empty
+      toks  <- newTVar Set.empty
+      ru    <- newTVar False
+
+      let neg = Neg { negId              = id'
+                    , negParent          = parent
+                    , negNegs            = negs
+                    , negProds           = prods
+                    , negToks            = toks
+                    , negAmem            = amem
+                    , negTests           = tests
+                    , negNearestAncestor = findAncestor parent amem
+                    , negRightUnlinked   = ru }
+
+      -- Add neg to its parent.
+      writeTVar childrenVar $! Map.insert k neg children
+
+      -- Insert node at the head of amem.successors.
+      modifyTVar' (amemSuccessors amem) (NegSuccessor neg Seq.<|)
+
+      -- Increment amem.referenceCount.
+      modifyTVar' (amemReferenceCount amem) (+1)
+
+      updateFromAbove env neg parent
+
+      -- Right unlink, but only after updating from above.
+      whenM (nullTSet (negToks neg)) $ rightUnlink (NegSuccessor neg)
+
+      return neg
 
 -- UPDATING NEW NODES WITH MATCHES FROM ABOVE
 
 class UpdateFromAbove a p where updateFromAbove :: Env -> a -> p -> STM ()
 
 instance UpdateFromAbove Bmem Join where updateFromAbove = undefined
+
+instance UpdateFromAbove Neg (Either Join Neg) where
+  updateFromAbove = undefined

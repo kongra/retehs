@@ -174,6 +174,13 @@ instance Hashable Val where
 -- variants correspond with Obj, Attr and Val.
 data Field = O | A | V deriving (Show, Eq)
 
+instance Hashable Field where
+  hashWithSalt salt f = salt `hashWithSalt` case f of
+    O -> 1 :: Int
+    A -> 2 :: Int
+    V -> 3 :: Int
+  {-# INLINE hashWithSalt #-}
+
 -- WMES
 
 type WmesIndex a       = Map.HashMap a (Set.HashSet Wme)
@@ -367,13 +374,15 @@ instance Hashable Amem where
 data AmemSuccessor = JoinSuccessor !Join
                    | NegSuccessor  !Neg deriving Eq
 
+type AmemSuccessorsMap a = Map.HashMap AmemSuccessorKey a
+
 -- BETA NETWORK NODES
 
 -- | Dummy Top Node
 data Dtn =
   Dtn
   {
-    dtnAllChildren :: !(TVar (Set.HashSet Join))
+    dtnAllChildren :: !(TVar (AmemSuccessorsMap Join))
   }
 
 -- | Beta Memory.
@@ -382,9 +391,9 @@ data Bmem =
   {
     bmemId          :: !Id
   , bmemParent      :: !Join
-  , bmemChildren    :: !(TVar (Set.HashSet Join))
-  , bmemAllChildren :: !(TVar (Set.HashSet Join))
-  , bmemToks        :: !(TVar (Set.HashSet Btok))
+  , bmemChildren    :: !(TVar (Set.HashSet       Join))
+  , bmemAllChildren :: !(TVar (AmemSuccessorsMap Join))
+  , bmemToks        :: !(TVar (Set.HashSet       Btok))
   }
 
 instance HavingId Bmem where
@@ -409,6 +418,21 @@ data JoinTest =
   }
   deriving Eq
 
+instance Hashable JoinTest where
+  hashWithSalt salt JoinTest { joinField1   = f1,
+                               joinField2   = f2,
+                               joinDistance = d } =
+    salt `hashWithSalt` f1 `hashWithSalt` f2 `hashWithSalt` d
+  {-# INLINE hashWithSalt #-}
+
+-- | A key to fast search for AmemSuccessors in their parent nodes
+-- (during network creation).
+data AmemSuccessorKey = AmemSuccessorKey !Amem ![JoinTest] deriving Eq
+
+instance Hashable AmemSuccessorKey where
+  hashWithSalt salt (AmemSuccessorKey amem tests) =
+    salt `hashWithSalt` amem `hashWithSalt` tests
+
 -- | Join node.
 data Join =
   Join
@@ -417,9 +441,9 @@ data Join =
   , joinParent          :: !(Either Dtn Bmem)
 
     -- Join may have at most 1 Bmem child.
-  , joinBmem            :: !(TVar (Maybe       Bmem))
-  , joinNegs            :: !(TVar (Set.HashSet Neg ))
-  , joinProds           :: !(TVar (Set.HashSet Prod))
+  , joinBmem            :: !(TVar (Maybe             Bmem))
+  , joinNegs            :: !(TVar (AmemSuccessorsMap Neg ))
+  , joinProds           :: !(TVar (Set.HashSet       Prod))
 
   , joinAmem            :: !Amem
   , joinNearestAncestor :: !(Maybe Join)
@@ -447,8 +471,8 @@ data Neg =
     negId              :: !Id
   , negParent          :: !(Either Join Neg)
 
-  , negNegs            :: !(TVar (Set.HashSet Neg))
-  , negProds           :: !(TVar (Set.HashSet Prod))
+  , negNegs            :: !(TVar (AmemSuccessorsMap Neg))
+  , negProds           :: !(TVar (Set.HashSet       Prod))
 
   , negToks            :: !(TVar (Set.HashSet Ntok))
   , negAmem            :: !Amem
