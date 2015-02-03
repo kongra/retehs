@@ -21,7 +21,7 @@ import           Data.Foldable (Foldable, toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
-import           Data.Maybe (fromMaybe, isJust, fromJust)
+import           Data.Maybe (fromMaybe, isJust, fromJust, isNothing)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (forMM_, toListM, whenM)
 import           Kask.Data.Sequence
@@ -524,19 +524,19 @@ leftActivateStdJoin env join parent btok = do
       forM_ wmes $ \wme -> leftActivateJoinChildren
                            env children (Right btok) (Left (Right btok)) wme
 
-type JoinChildren = (Set.HashSet Bmem, Set.HashSet Neg, Set.HashSet Prod)
+type JoinChildren = (Maybe Bmem, Set.HashSet Neg, Set.HashSet Prod)
 
 joinChildren :: Join -> STM JoinChildren
 joinChildren join = do
-  bmems <- readTVar (joinBmems join)
+  bmem  <- readTVar (joinBmem  join)
   negs  <- readTVar (joinNegs  join)
   prods <- readTVar (joinProds join)
-  return (bmems, negs, prods)
+  return (bmem, negs, prods)
 {-# INLINE joinChildren #-}
 
 nullJoinChildren :: JoinChildren -> Bool
-nullJoinChildren (bmems, negs, prods) =
-  Set.null bmems && Set.null negs  && Set.null prods
+nullJoinChildren (bmem, negs, prods) =
+  isNothing bmem && Set.null negs  && Set.null prods
 {-# INLINE nullJoinChildren #-}
 
 leftActivateJoinChildren :: Env -> JoinChildren
@@ -544,8 +544,11 @@ leftActivateJoinChildren :: Env -> JoinChildren
                             -> Either JoinTok Ntok -- ^ For Neg/Prod activation.
                             -> Wme
                             -> STM ()
-leftActivateJoinChildren env (bmems, negs, prods) rtok ltok wme = do
-  forM_ (toList bmems) $ \bmem -> leftActivateBmem env bmem rtok       wme
+leftActivateJoinChildren env (bmem, negs, prods) rtok ltok wme = do
+  case bmem of
+    Nothing    -> return ()
+    Just bmem' -> leftActivateBmem env bmem' rtok wme
+
   forM_ (toList negs ) $ \neg ->  leftActivateNeg  env neg  ltok (Just wme)
   forM_ (toList prods) $ \prod -> leftActivateProd env prod ltok (Just wme)
 {-# INLINE leftActivateJoinChildren #-}
@@ -749,7 +752,8 @@ rightUnlinked  = successorProp joinRightUnlinked negRightUnlinked
 {-# INLINE rightUnlinked #-}
 
 nearestAncestor :: AmemSuccessor -> Maybe AmemSuccessor
-nearestAncestor = successorProp joinNearestAncestor negNearestAncestor
+nearestAncestor = successorProp (liftM JoinSuccessor . joinNearestAncestor)
+                                negNearestAncestor
 {-# INLINE nearestAncestor #-}
 
 nodeAmem :: AmemSuccessor -> Amem

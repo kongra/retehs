@@ -399,16 +399,13 @@ instance Hashable Bmem where
   hashWithSalt = hashWithId
   {-# INLINE hashWithSalt #-}
 
--- | Distance within lists of Toks or Conds.
-type Distance = Int
-
 -- | Representation of a join test.
 data JoinTest =
   JoinTest
   {
     joinField1   :: !Field
   , joinField2   :: !Field
-  , joinDistance :: !Distance
+  , joinDistance :: !Int
   }
   deriving Eq
 
@@ -419,12 +416,13 @@ data Join =
     joinId              :: !Id
   , joinParent          :: !(Either Dtn Bmem)
 
-  , joinBmems           :: !(TVar (Set.HashSet Bmem))
-  , joinNegs            :: !(TVar (Set.HashSet Neg))
+    -- Join may have at most 1 Bmem child.
+  , joinBmem            :: !(TVar (Maybe       Bmem))
+  , joinNegs            :: !(TVar (Set.HashSet Neg ))
   , joinProds           :: !(TVar (Set.HashSet Prod))
 
   , joinAmem            :: !Amem
-  , joinNearestAncestor :: !(Maybe AmemSuccessor)
+  , joinNearestAncestor :: !(Maybe Join)
   , joinTests           :: ![JoinTest]
   , joinLeftUnlinked    :: !(TVar Bool)
   , joinRightUnlinked   :: !(TVar Bool)
@@ -472,7 +470,7 @@ instance Hashable Neg where
   {-# INLINE hashWithSalt #-}
 
 -- | Symbol location describes the binding for a variable within a token.
-data Location = Location !Field !Distance
+data Location = Location !Int !Field
 
 -- | Map of variable bindings for productions.
 type Bindings = Map.HashMap Variable Location

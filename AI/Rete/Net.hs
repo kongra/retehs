@@ -14,290 +14,212 @@
 ------------------------------------------------------------------------
 module AI.Rete.Net where
 
--- import           AI.Rete.Data
--- import           AI.Rete.Flow
--- import           Control.Concurrent.STM
--- import           Control.Monad (forM_)
--- import           Data.Foldable (toList)
--- import qualified Data.HashMap.Strict as Map
--- import qualified Data.HashSet as Set
--- import           Data.List (sortBy)
--- import           Data.Maybe (isJust, fromJust)
--- import qualified Data.Sequence as Seq
--- import           Safe (headMay)
+import           AI.Rete.Data
+import           AI.Rete.Flow
+import           Control.Concurrent.STM
+import           Control.Monad (forM_, liftM)
+import           Data.Foldable (toList)
+import qualified Data.HashMap.Strict as Map
+import qualified Data.HashSet as Set
+import           Data.Maybe (isJust, fromJust)
+import qualified Data.Sequence as Seq
+import           Safe (headMay)
 -- -- import           Data.Hashable (Hashable)
 -- -- import           Kask.Control.Monad (mapMM_, forMM_, toListM, whenM)
 -- -- import           Kask.Data.Sequence (removeFirstOccurence)
 
--- isVariable :: Symbol -> Bool
--- isVariable (Var   _) = True
--- isVariable (Const _) = False
--- {-# INLINE isVariable #-}
+isVariable :: Symbol -> Bool
+isVariable (Var   _) = True
+isVariable (Const _) = False
+{-# INLINE isVariable #-}
 
--- -- AMEM CREATION
+-- AMEM CREATION
 
--- -- | Searches for an existing alpha memory for the given symbols or
--- -- creates a new one.
--- buildOrShareAmem :: Env -> Symbol -> Symbol -> Symbol -> STM Amem
--- buildOrShareAmem env obj attr val = do
---   let w     = Const wildcardConstant
---       obj'  = Obj  $ if isVariable obj  then w else obj
---       attr' = Attr $ if isVariable attr then w else attr
---       val'  = Val  $ if isVariable val  then w else val
+-- | Searches for an existing alpha memory for the given symbols or
+-- creates a new one.
+buildOrShareAmem :: Env -> Symbol -> Symbol -> Symbol -> STM Amem
+buildOrShareAmem env obj attr val = do
+  let w     = Const wildcardConstant
+      obj'  = Obj  $ if isVariable obj  then w else obj
+      attr' = Attr $ if isVariable attr then w else attr
+      val'  = Val  $ if isVariable val  then w else val
 
---   amems <- readTVar (envAmems env)
---   let k = WmeKey obj' attr' val'
+  amems <- readTVar (envAmems env)
+  let k = WmeKey obj' attr' val'
 
---   case Map.lookup k amems of
---     Just amem -> return amem -- Happily found.
---     Nothing   -> do
---       -- Let's create new Amem.
---       successors <- newTVar Seq.empty
---       refCount   <- newTVar 0
+  case Map.lookup k amems of
+    Just amem -> return amem -- Happily found.
+    Nothing   -> do
+      -- Let's create new Amem.
+      successors <- newTVar Seq.empty
+      refCount   <- newTVar 0
 
---       wmes       <- newTVar Set.empty
---       wmesByObj  <- newTVar Map.empty
---       wmesByAttr <- newTVar Map.empty
---       wmesByVal  <- newTVar Map.empty
+      wmes       <- newTVar Set.empty
+      wmesByObj  <- newTVar Map.empty
+      wmesByAttr <- newTVar Map.empty
+      wmesByVal  <- newTVar Map.empty
 
---       let amem = Amem { amemObj            = obj'
---                       , amemAttr           = attr'
---                       , amemVal            = val'
---                       , amemSuccessors     = successors
---                       , amemReferenceCount = refCount
---                       , amemWmes           = wmes
---                       , amemWmesByObj      = wmesByObj
---                       , amemWmesByAttr     = wmesByAttr
---                       , amemWmesByVal      = wmesByVal }
+      let amem = Amem { amemObj            = obj'
+                      , amemAttr           = attr'
+                      , amemVal            = val'
+                      , amemSuccessors     = successors
+                      , amemReferenceCount = refCount
+                      , amemWmes           = wmes
+                      , amemWmesByObj      = wmesByObj
+                      , amemWmesByAttr     = wmesByAttr
+                      , amemWmesByVal      = wmesByVal }
 
---       -- Put amem into the env registry of Amems.
---       writeTVar (envAmems env) $! Map.insert k amem amems
+      -- Put amem into the env registry of Amems.
+      writeTVar (envAmems env) $! Map.insert k amem amems
 
---       activateAmemOnCreation env amem obj' attr' val'
---       return amem
+      activateAmemOnCreation env amem obj' attr' val'
+      return amem
 
--- -- | A simplified, more effective version of amem activation that
--- -- takes place on the amem creation. No successors activation here,
--- -- cause no successors present.
--- activateAmemOnCreation :: Env -> Amem -> Obj -> Attr -> Val -> STM ()
--- activateAmemOnCreation env amem obj attr val = do
---   byObjIndex  <- readTVar (envWmesByObj  env)
---   byAttrIndex <- readTVar (envWmesByAttr env)
---   byValIndex  <- readTVar (envWmesByVal  env)
+-- | A simplified, more effective version of amem activation that
+-- takes place on the amem creation. No successors activation here,
+-- cause no successors present.
+activateAmemOnCreation :: Env -> Amem -> Obj -> Attr -> Val -> STM ()
+activateAmemOnCreation env amem obj attr val = do
+  byObjIndex  <- readTVar (envWmesByObj  env)
+  byAttrIndex <- readTVar (envWmesByAttr env)
+  byValIndex  <- readTVar (envWmesByVal  env)
 
---   let wmesMatchingByObj  = Map.lookupDefault Set.empty obj  byObjIndex
---       wmesMatchingByAttr = Map.lookupDefault Set.empty attr byAttrIndex
---       wmesMatchingByVal  = Map.lookupDefault Set.empty val  byValIndex
---       wmesMatching       = wmesMatchingByObj  `Set.intersection`
---                            wmesMatchingByAttr `Set.intersection`
---                            wmesMatchingByVal
+  let wmesMatchingByObj  = Map.lookupDefault Set.empty obj  byObjIndex
+      wmesMatchingByAttr = Map.lookupDefault Set.empty attr byAttrIndex
+      wmesMatchingByVal  = Map.lookupDefault Set.empty val  byValIndex
+      wmesMatching       = wmesMatchingByObj  `Set.intersection`
+                           wmesMatchingByAttr `Set.intersection`
+                           wmesMatchingByVal
 
---   -- Put all matching wmes into the amem.
---   writeTVar (amemWmes amem) wmesMatching
+  -- Put all matching wmes into the amem.
+  writeTVar (amemWmes amem) wmesMatching
 
---   -- Iteratively work on every wme.
---   forM_ (toList wmesMatching) $ \wme -> do
---     -- Put amem to wme registry of Amems.
---     modifyTVar' (wmeAmems wme) (amem:)
+  -- Iteratively work on every wme.
+  forM_ (toList wmesMatching) $ \wme -> do
+    -- Put amem to wme registry of Amems.
+    modifyTVar' (wmeAmems wme) (amem:)
 
---     -- Put wme into amem indexes
---     modifyTVar' (amemWmesByObj  amem) (wmesIndexInsert (wmeObj  wme) wme)
---     modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
---     modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
--- {-# INLINE activateAmemOnCreation #-}
+    -- Put wme into amem indexes
+    modifyTVar' (amemWmesByObj  amem) (wmesIndexInsert (wmeObj  wme) wme)
+    modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
+    modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
+{-# INLINE activateAmemOnCreation #-}
 
--- -- NETWORK CREATION ABSTRACTION
+-- BMEM CREATION
 
--- class AddChild        p a where addChild        :: p -> a -> STM ()
--- class UpdateFromAbove a p where updateFromAbove :: Env -> a -> p -> STM ()
--- class FindChildBmem   a   where findChildBmem   :: a -> STM (Maybe Bmem)
+buildOrShareBmem :: Env -> Join -> STM Bmem
+buildOrShareBmem env parent = do
+  -- Search for an existing Bmem to share.
+  sharedBmem <- readTVar (joinBmem parent)
+  case sharedBmem of
+    Just bmem -> return bmem  -- Happily found.
+    Nothing   -> do
+      -- Create new Bmem.
+      id'         <- genid env
+      children    <- newTVar Set.empty
+      allChildren <- newTVar Set.empty
+      toks        <- newTVar Set.empty
 
--- -- BMEM CREATION
+      let bmem = Bmem { bmemId          = id'
+                      , bmemParent      = parent
+                      , bmemChildren    = children
+                      , bmemAllChildren = allChildren
+                      , bmemToks        = toks }
 
--- buildOrShareBmem :: Env -> CondNode -> STM Bmem
--- buildOrShareBmem env parent = do
---   sharedBem <- findChildBmem parent
---   case sharedBem of
---     Just bmem -> return bmem
---     Nothing   -> do
---       -- Create new Bmem.
---       id'         <- genid env
---       children    <- newTVar Set.empty
---       allChildren <- newTVar Set.empty
---       toks        <- newTVar Set.empty
+      -- Set it in its parent.
+      writeTVar (joinBmem parent) $! Just bmem
 
---       let bmem = Bmem { bmemId          = id'
---                       , bmemParent      = parent
---                       , bmemChildren    = children
---                       , bmemAllChildren = allChildren
---                       , bmemToks        = toks }
+      updateFromAbove env bmem parent
+      return bmem
 
---       addChild parent bmem
---       updateFromAbove env bmem parent
---       return bmem
+-- PROCESSING CONDS FOR PRODUCTION CREATION
 
--- instance FindChildBmem CondNode where
---   findChildBmem (PosCondNode join) = findChildBmem join
---   findChildBmem (NegCondNode neg ) = findChildBmem neg
---   findChildBmem (NccCondNode ncc ) = findChildBmem ncc
---   {-# INLINE findChildBmem #-}
+type IndexedPosCond = (Int, PosCond)
+type IndexedNegCond = (Int, NegCond)
 
--- instance FindChildBmem Join where
---   findChildBmem join = toListT (joinChildren join) >>= findChildBmem
---   {-# INLINE findChildBmem #-}
+indexedPosConds :: [PosCond] -> [IndexedPosCond]
+indexedPosConds = zip [0 ..]
+{-# INLINE indexedPosConds #-}
 
--- instance FindChildBmem Neg where
---   findChildBmem neg = toListT (negChildren neg) >>= findChildBmem
---   {-# INLINE findChildBmem #-}
+indexedNegConds :: Int -> [NegCond] -> [IndexedNegCond]
+indexedNegConds start = zip [start ..]
+{-# INLINE indexedNegConds #-}
 
--- instance FindChildBmem Ncc where
---   findChildBmem ncc = toListT (nccChildren ncc) >>= findChildBmem
---   {-# INLINE findChildBmem #-}
+-- JOIN TESTS
 
--- instance FindChildBmem [CondChild] where
---   findChildBmem []     = return Nothing
---   findChildBmem (c:cs) = case c of
---     BmemCondChild bmem -> return (Just bmem)
---     _                  -> findChildBmem cs
+-- | Returns a field within the PosCond that is equal to the passed
+-- Symbol.
+fieldEqualTo :: PosCond -> Symbol -> Maybe Field
+fieldEqualTo (PosCond (Obj obj) (Attr attr) (Val val)) s
+  | obj  == s = Just O
+  | attr == s = Just A
+  | val  == s = Just V
+  | otherwise = Nothing
+{-# INLINE fieldEqualTo #-}
 
--- instance AddChild CondNode Bmem where
---   addChild (PosCondNode join) = toTSeqFront (joinChildren join) . BmemCondChild
---   addChild (NegCondNode neg ) = toTSeqFront (negChildren  neg ) . BmemCondChild
---   addChild (NccCondNode ncc ) = toTSeqFront (nccChildren  ncc ) . BmemCondChild
---   {-# INLINE addChild #-}
+matchingLocation :: Symbol -> IndexedPosCond -> Maybe Location
+matchingLocation s (i, cond) = case fieldEqualTo cond s of
+  Nothing -> Nothing
+  Just f  -> Just (Location i f)
+{-# INLINE matchingLocation #-}
 
--- -- PROCESSING CONDS
+joinTestForField :: Int -> Symbol -> Field -> [IndexedPosCond] -> Maybe JoinTest
+joinTestForField i v field earlierConds
+  | isVariable v =
+    case headMay (matches earlierConds) of
+      Nothing             -> Nothing
+      Just (Location i' f) -> Just (JoinTest field f (i - i'))
 
--- -- | It is desirable for the Conds of a production to be sorted in
--- -- such a way that the positive conds come before the negative and the
--- -- ncc conds. Also the subconditions of a ncc should be sorted in such
--- -- way. The following procedure does the job.
--- sortConds :: [Cond] -> [Cond]
--- sortConds = map processCond . sortBy (flip condsOrdering)
---   where
---     processCond c = case c of
---       CNccCond (NccCond subs) -> CNccCond $! NccCond $! sortConds subs
---       _                       -> c
--- {-# INLINE sortConds #-}
+  | otherwise = Nothing -- No tests from Consts (non-Vars).
+  where
+    matches = map fromJust . filter isJust . map (matchingLocation v)
+{-# INLINE joinTestForField #-}
 
--- condsOrdering :: Cond -> Cond -> Ordering
--- condsOrdering (CPosCond _) (CPosCond _) = EQ
--- condsOrdering (CPosCond _) _            = GT
+joinTestsForPosCond :: IndexedPosCond -> [IndexedPosCond] -> [JoinTest]
+joinTestsForPosCond (i, PosCond obj attr val) =
+  joinTestsForCondImpl i obj attr val
+{-# INLINE joinTestsForPosCond #-}
 
--- condsOrdering (CNegCond _) (CPosCond _) = LT
--- condsOrdering (CNegCond _) (CNegCond _) = EQ
--- condsOrdering (CNegCond _) (CNccCond _) = GT
+joinTestsForNegCond :: IndexedNegCond -> [IndexedPosCond] -> [JoinTest]
+joinTestsForNegCond (i, NegCond obj attr val) =
+  joinTestsForCondImpl i obj attr val
+{-# INLINE joinTestsForNegCond #-}
 
--- condsOrdering (CNccCond _) (CPosCond _) = LT
--- condsOrdering (CNccCond _) (CNegCond _) = LT
--- condsOrdering (CNccCond _) (CNccCond _) = EQ
--- {-# INLINE condsOrdering #-}
+joinTestsForCondImpl :: Int -> Obj -> Attr -> Val
+                     -> [IndexedPosCond] -> [JoinTest]
+joinTestsForCondImpl i (Obj obj) (Attr attr) (Val val) earlierConds =
+  result3
+  where
+    test1   = joinTestForField i obj  O earlierConds
+    test2   = joinTestForField i attr A earlierConds
+    test3   = joinTestForField i val  V earlierConds
 
--- -- JOIN TESTS
+    result1 = [fromJust test3 | isJust test3]
+    result2 = if isJust test2 then fromJust test2 : result1 else result1
+    result3 = if isJust test1 then fromJust test1 : result2 else result2
+{-# INLINE joinTestsForCondImpl #-}
 
--- -- | Returns a field within the PosCond that is equal to the passed
--- -- Symbol.
--- fieldEqualTo :: PosCond -> Symbol -> Maybe Field
--- fieldEqualTo (PosCond (Obj obj) (Attr attr) (Val val)) s
---   | obj  == s = Just O
---   | attr == s = Just A
---   | val  == s = Just V
---   | otherwise = Nothing
--- {-# INLINE fieldEqualTo #-}
+-- NEAREST ANCESTOR WITH THE SAME Amem.
 
--- type IndexedPosCond = (PosCond, Distance)
--- data IndexedField   = IndexedField !Field !Distance
+class FindAncestor a b where findAncestor :: a -> Amem -> Maybe b
 
--- indexedPosConds :: [Cond] -> [IndexedPosCond]
--- indexedPosConds = loop 0 . reverse
---   where
---     loop _ []     = []
---     loop i (c:cs) = case c of
---       CPosCond pc -> (pc, i) : loop (i+1) cs
---       _           ->           loop (i+1) cs
--- {-# INLINE indexedPosConds #-}
+instance FindAncestor Join Join where
+  findAncestor join amem = if joinAmem join == amem
+    then Just join
+    else findAncestor (joinParent join) amem
 
--- indexedField :: Symbol -> IndexedPosCond -> Maybe IndexedField
--- indexedField s (cond, d) = case fieldEqualTo cond s of
---   Nothing -> Nothing
---   Just f  -> Just (IndexedField f d)
--- {-# INLINE indexedField #-}
+instance FindAncestor (Either Dtn Bmem) Join where
+  findAncestor (Left  _   ) _    = Nothing
+  findAncestor (Right bmem) amem = findAncestor (bmemParent bmem) amem
 
--- joinTestFromField :: Symbol -> Field -> [IndexedPosCond] -> Maybe JoinTest
--- joinTestFromField v field earlierConds
---   | isVariable v =
---     case headMay (matches earlierConds) of
---       Nothing                 -> Nothing
---       -- Indices are 0-based. When creating a JoinTest we have to
---       -- increase it to maintain a required 1-based indexing.
---       Just (IndexedField f d) -> Just (JoinTest field f (d+1))
+instance FindAncestor Neg AmemSuccessor where
+  findAncestor neg amem = if negAmem neg == amem
+    then Just (NegSuccessor neg)
+    else findAncestor (negParent neg) amem
 
---   | otherwise = Nothing -- No tests from Consts (non-Vars).
---   where
---     matches = map fromJust . filter isJust . map (indexedField v)
--- {-# INLINE joinTestFromField #-}
-
--- class JoinTestsFromCond c where joinTestsFromCond :: c -> [Cond] -> [JoinTest]
-
--- instance JoinTestsFromCond PosCond where
---   joinTestsFromCond (PosCond obj attr val) = joinTestsFromCondImpl obj attr val
---   {-# INLINE joinTestsFromCond #-}
-
--- instance JoinTestsFromCond NegCond where
---   joinTestsFromCond (NegCond obj attr val) = joinTestsFromCondImpl obj attr val
---   {-# INLINE joinTestsFromCond #-}
-
--- joinTestsFromCondImpl :: Obj -> Attr -> Val -> [Cond] -> [JoinTest]
--- joinTestsFromCondImpl (Obj obj) (Attr attr) (Val val) earlierConds = result3
---   where
---     econds  = indexedPosConds   earlierConds
---     test1   = joinTestFromField obj  O econds
---     test2   = joinTestFromField attr A econds
---     test3   = joinTestFromField val  V econds
-
---     result1 = [fromJust test3 | isJust test3]
---     result2 = if isJust test2 then fromJust test2 : result1 else result1
---     result3 = if isJust test1 then fromJust test1 : result2 else result2
--- {-# INLINE joinTestsFromCondImpl #-}
-
--- -- NEAREST ANCESTOR WITH THE SAME Amem.
-
--- class FindAncestor a where findAncestor :: a -> Amem -> Maybe AmemSuccessor
-
--- instance FindAncestor JoinParent where
---   findAncestor (BmemJoinParent bmem) = findAncestor bmem
---   findAncestor (DtnJoinParent  dtn ) = findAncestor dtn
-
--- instance FindAncestor CondNode where
---   findAncestor (PosCondNode join) = findAncestor join
---   findAncestor (NegCondNode neg ) = findAncestor neg
---   findAncestor (NccCondNode ncc ) = findAncestor ncc
-
--- instance FindAncestor CondNodeWithDtn where
---   findAncestor (DtnCondNode dtn) = findAncestor dtn
---   findAncestor (StdCondNode c  ) = findAncestor c
-
--- instance FindAncestor Dtn where
---   findAncestor _ _ = Nothing
---   {-# INLINE findAncestor #-}
-
--- instance FindAncestor Bmem where
---   findAncestor bmem = findAncestor (bmemParent bmem)
-
--- instance FindAncestor Join where
---   findAncestor join amem =
---     if joinAmem join == amem
---       then Just (JoinAmemSuccessor join)
---       else findAncestor (joinParent join) amem
-
--- instance FindAncestor Neg where
---   findAncestor neg amem =
---     if negAmem neg == amem
---       then Just (NegAmemSuccessor neg)
---       else findAncestor (negParent neg) amem
-
--- instance FindAncestor Ncc where
---   findAncestor ncc = findAncestor (partnerParent (nccPartner ncc))
+instance FindAncestor (Either Join Neg) AmemSuccessor where
+  findAncestor (Left join) amem = liftM JoinSuccessor (findAncestor join amem)
+  findAncestor (Right neg) amem = findAncestor neg amem
 
 -- -- JOIN CREATION
 
@@ -348,8 +270,6 @@ module AI.Rete.Net where
 
 -- UPDATING NEW NODES WITH MATCHES FROM ABOVE
 
--- instance UpdateFromAbove Bmem    CondNode        where updateFromAbove = undefined
--- instance UpdateFromAbove Neg     CondNodeWithDtn where updateFromAbove = undefined
--- instance UpdateFromAbove Ncc     CondNodeWithDtn where updateFromAbove = undefined
--- instance UpdateFromAbove Partner CondNode        where updateFromAbove = undefined
--- instance UpdateFromAbove Prod    CondNode        where updateFromAbove = undefined
+class UpdateFromAbove a p where updateFromAbove :: Env -> a -> p -> STM ()
+
+instance UpdateFromAbove Bmem Join where updateFromAbove = undefined
