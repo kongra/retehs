@@ -24,9 +24,8 @@ import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe, isJust, fromJust)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (forMM_, toListM, whenM)
--- import           Kask.Control.Monad (forMM_, toListM, whenM)
-import           Kask.Data.Sequence (removeFirstOccurence,
-                                     insertBeforeFirstOccurence)
+import           Kask.Data.Sequence
+  (removeFirstOccurence, insertBeforeFirstOccurence)
 
 -- MISC. UTILS
 
@@ -36,7 +35,7 @@ nullTSet = liftM Set.null . readTVar
 {-# INLINE nullTSet #-}
 
 -- | A monadic (in STM monad) version of Data.Foldable.toList.
-toListT :: Foldable f => TVar (f a) -> STM [a] -- TSeq a -> STM [a]
+toListT :: Foldable f => TVar (f a) -> STM [a]
 toListT = toListM . readTVar
 {-# INLINE toListT #-}
 
@@ -613,7 +612,7 @@ leftActivateNeg env neg tok wme = do
   let amem = negAmem neg
   isAmemEmpty <- nullTSet (amemWmes amem)
 
-  -- Compute the join results (using amem indexes)
+  -- Compute the join results (using amem indexes).
   unless isAmemEmpty $ do
     wmes <- matchingAmemWmes (negTests neg) (Right newTok) amem
     forM_ wmes $ \w -> do
@@ -662,7 +661,7 @@ rightActivateNeg env neg wme =
       -- Insert jr into wme.neg-join-results.
       modifyTVar' (wmeNegJoinResults  wme) (Set.insert jr)
 
--- -- PRODUCTION NODES
+-- PRODUCTION NODES
 
 leftActivateProd :: Env -> Prod -> Either JoinTok Ntok -> Maybe Wme -> STM ()
 leftActivateProd env prod tok wme = do
@@ -697,7 +696,7 @@ relinkToParent join parent = do
   writeTVar   (joinLeftUnlinked join  ) False
 {-# INLINE relinkToParent #-}
 
--- -- RIGHT U/L (Joins AND Negs - AmemSuccessors)
+-- RIGHT U/L (Joins AND Negs - AmemSuccessors)
 
 isRightUnlinked :: AmemSuccessor -> STM Bool
 isRightUnlinked = readTVar . rightUnlinked
@@ -715,12 +714,12 @@ relinkToAmem node = do
   ancestorLookup <- relinkAncestor node
   case ancestorLookup of
     Just ancestor ->
-      -- insert node into node.amem.successors immediately before
-      -- ancestor
+      -- Insert node into node.amem.successors immediately before
+      -- ancestor.
       modifyTVar' (amemSuccessors amem')
         (node `insertBeforeFirstOccurence` ancestor)
 
-    -- insert node at the tail of node.amem.successors
+    -- Insert node at the tail of node.amem.successors.
     Nothing -> toTSeqEnd (amemSuccessors amem') node
 
   writeTVar (rightUnlinked node) False
@@ -800,8 +799,6 @@ removeWmeImpl env obj attr val = do
 {-# INLINE removeWmeImpl #-}
 
 propagateWmeRemoval :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
--- propagateWmeRemoval = undefined
-
 propagateWmeRemoval env wme obj attr val = do
   -- For every amem this wme belongs to ...
   forMM_ (readTVar (wmeAmems wme)) $ \amem -> do
@@ -836,20 +833,19 @@ propagateWmeRemoval env wme obj attr val = do
     let updatedJresults = Set.delete jr jresults
     writeTVar (ntokNegJoinResults owner) updatedJresults
 
-    -- If jr.owner.negative-join-results is nil
-    when (Set.null updatedJresults) $
-      leftActivateOwnerNodeChildren env owner
+    -- If jr.owner.negative-join-results is nil.
+    when (Set.null updatedJresults) $ do
+      children <- negChildren (ntokNode owner)
+      unless (nullNegChildren children) $
+        leftActivateNegChildren env children (Right owner) Nothing
 {-# INLINE propagateWmeRemoval #-}
-
-leftActivateOwnerNodeChildren :: Env -> Ntok -> STM ()
-leftActivateOwnerNodeChildren = undefined
 
 -- DELETING TOKS
 
 data TokTokPolicy = RemoveFromParent | DontRemoveFromParent deriving Eq
 data TokWmePolicy = RemoveFromWme    | DontRemoveFromWme    deriving Eq
 
--- -- | Deletes the descendents of the passed token.
+-- | Deletes the descendents of the passed token.
 deleteDescendentsOfTok :: Env -> WmeTok -> STM ()
 deleteDescendentsOfTok env tok = case tok of
   BmemWmeTok btok -> do
