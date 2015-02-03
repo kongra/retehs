@@ -383,6 +383,27 @@ instance TokWmes Ntok where
 instance TokWmes Ptok where
   tokWmes Ptok { ptokWme = wme, ptokParent = p } = wme : tokWmes p
 
+class TokWme a where tokWme :: a -> Maybe Wme
+
+instance TokWme WmeTok where
+  tokWme tok = case tok of
+    BmemWmeTok btok -> tokWme btok
+    NegWmeTok  ntok -> tokWme ntok
+    ProdWmeTok ptok -> tokWme ptok
+  {-# INLINE tokWme #-}
+
+instance TokWme Btok where
+  tokWme Btok { btokWme = w } = Just w
+  {-# INLINE tokWme #-}
+
+instance TokWme Ntok where
+  tokWme Ntok { ntokWme = w } = w
+  {-# INLINE tokWme #-}
+
+instance TokWme Ptok where
+  tokWme Ptok { ptokWme = w } = w
+  {-# INLINE tokWme #-}
+
 -- BETA MEMORY
 
 leftActivateBmem :: Env -> Bmem -> Either Dtt Btok -> Wme -> STM ()
@@ -852,102 +873,86 @@ deleteDescendentsOfTok env tok = case tok of
 
 -- | Deletes the token and it's descendents.
 deleteTokAndDescendents :: Env -> WmeTok -> TokTokPolicy -> TokWmePolicy -> STM ()
-deleteTokAndDescendents = undefined
--- deleteTokAndDescendents env tok tokPolicy wmePolicy = do
---   deleteDescendentsOfTok env tok
---   removeTokFromItsNode   tok
+deleteTokAndDescendents env tok tokPolicy wmePolicy = do
+  deleteDescendentsOfTok env tok
+  removeTokFromItsNode   tok
 
---   when (wmePolicy == RemoveFromWme) $ case tokWme tok of
---     Nothing -> return ()
---     Just w  -> modifyTVar' (wmeToks w) (Set.delete tok)
+  when (wmePolicy == RemoveFromWme) $ case tokWme tok of
+    Nothing -> return ()
+    Just w  -> modifyTVar' (wmeToks w) (Set.delete tok)
 
---   when (tokPolicy == RemoveFromParent) $ case tokParent tok of
---     Nothing -> error "PANIC (7): Dtt ??? Here ???!!!"
---     Just t  -> modifyTVar' (tokChildren t) (Set.delete tok)
+  when (tokPolicy == RemoveFromParent) $ removeTokFromItsParent tok
 
---   -- Node-specific removal.
---   case tokNode tok of
---     DtnTokNode     _       -> error "PANIC (8): Dtt ??? Here ???!!!"
---     BmemTokNode    bmem    -> nodeSpecificTokRemoval env bmem    tok
---     NegTokNode     neg     -> nodeSpecificTokRemoval env neg     tok
---     NccTokNode     ncc     -> nodeSpecificTokRemoval env ncc     tok
---     PartnerTokNode partner -> nodeSpecificTokRemoval env partner tok
---     ProdTokNode    prod    -> nodeSpecificTokRemoval env prod    tok
+  -- Node-specific deletion.
+  case tok of
+    BmemWmeTok btok -> deleteBtok     btok
+    NegWmeTok  ntok -> deleteNtok     ntok
+    ProdWmeTok ptok -> deletePtok env ptok
 
--- -- | If tok.node is not a Partner, remove it from tok.node.items.
--- removeTokFromItsNode :: Tok -> STM ()
--- removeTokFromItsNode tok = case tokNode tok of
---   PartnerTokNode _    -> return ()
---   DtnTokNode     _    -> error "PANIC (9): Dtt ??? Here ???!!!."
---   BmemTokNode    bmem -> removeTok        (bmemToks bmem) tok
---   ProdTokNode    prod -> removeTok        (prodToks prod) tok
---   NegTokNode     neg  -> removeTok        (negToks  neg)  tok
---   NccTokNode     ncc  -> removeTokFromNcc ncc
---   where
---     removeTok var =  modifyTVar' var . Set.delete
---     removeTokFromNcc Ncc { nccToks = toks } = modifyTVar' toks (Map.delete k)
---       where
---         t = fromMaybe (error "PANIC (10): Dtt ??? Here ???!!!") (tokParent tok)
---         k = OwnerKey  t  (tokWme tok)
--- {-# INLINE removeTokFromItsNode #-}
+removeTokFromItsNode :: WmeTok -> STM ()
+removeTokFromItsNode tok = case tok of
+  BmemWmeTok btok -> modifyTVar' (bmemToks (btokNode btok)) (Set.delete btok)
+  NegWmeTok  ntok -> modifyTVar' (negToks  (ntokNode ntok)) (Set.delete ntok)
+  ProdWmeTok ptok -> modifyTVar' (prodToks (ptokNode ptok)) (Set.delete ptok)
+{-# INLINE removeTokFromItsNode #-}
 
--- class NodeSpecificTokRemoval a where
---   nodeSpecificTokRemoval :: Env -> a -> Tok -> STM ()
+class RemoveTokFromItsParent a where removeTokFromItsParent :: a -> STM ()
 
--- instance NodeSpecificTokRemoval Bmem where
---   nodeSpecificTokRemoval _ bmem _ =
---     whenM (nullTSet (bmemToks bmem)) $ -- No items in here, so ...
---       forMM_ (toListT (bmemChildren bmem)) $ \join ->
---         -- ... let's right unlink children.
---         rightUnlink (JoinAmemSuccessor join)
---   {-# INLINE nodeSpecificTokRemoval #-}
+instance RemoveTokFromItsParent WmeTok where
+  removeTokFromItsParent (BmemWmeTok btok) = removeTokFromItsParent btok
+  removeTokFromItsParent (NegWmeTok  ntok) = removeTokFromItsParent ntok
+  removeTokFromItsParent (ProdWmeTok ptok) = removeTokFromItsParent ptok
+  {-# INLINE removeTokFromItsParent #-}
 
--- instance NodeSpecificTokRemoval Neg  where
---   nodeSpecificTokRemoval _ neg tok = do
---     whenM (nullTSet (negToks neg)) $ rightUnlink (NegAmemSuccessor neg)
+instance RemoveTokFromItsParent Btok where
+  removeTokFromItsParent btok = case btokParent btok of
+    Left  _      -> return () -- No removal from Dtt.
+    Right parent -> modifyTVar' (btokChildren parent)
+                    (Set.delete (BmemWmeTok btok))
+  {-# INLINE removeTokFromItsParent #-}
 
---     -- For jr in tok.(neg)-join-results ...
---     forMM_ (toListT (tokNegJoinResults tok)) $ \jr ->
---       -- ... remove jr from jr.wme.negative-join-results.
---       modifyTVar' (wmeNegJoinResults (njrWme jr)) (Set.delete jr)
---   {-# INLINE nodeSpecificTokRemoval #-}
+instance RemoveTokFromItsParent Ntok where
+  removeTokFromItsParent ntok = case ntokParent ntok of
+    Left  joinTok -> case joinTok of
+      Left  _      -> return () -- No removal from Dtt.
+      Right parent -> modifyTVar' (btokChildren parent)
+                      (Set.delete (NegWmeTok ntok))
+    Right parent  -> modifyTVar' (ntokChildren parent)
+                     (Set.delete (Left ntok))
+  {-# INLINE removeTokFromItsParent #-}
 
--- instance NodeSpecificTokRemoval Ncc where
---   nodeSpecificTokRemoval _ _ tok =
---     -- For result in tok.ncc-results ...
---     forMM_ (toListT (tokNccResults tok)) $ \result -> do
---       -- ... remove result from result.wme.tokens,
---       case tokWme result of
---         Nothing  -> error "PANIC (11): result.wme IS NIL (Nothing)."
---         Just wme -> modifyTVar' (wmeToks wme) (Set.delete result)
+instance RemoveTokFromItsParent Ptok where
+  removeTokFromItsParent ptok = case ptokParent ptok of
+    Left  joinTok -> case joinTok of
+      Left  _      -> return () -- No removal from Dtt.
+      Right parent -> modifyTVar' (btokChildren parent)
+                      (Set.delete (ProdWmeTok ptok))
+    Right parent  -> modifyTVar' (ntokChildren parent)
+                     (Set.delete (Right ptok))
+  {-# INLINE removeTokFromItsParent #-}
 
---       -- ... remove result from result.parent.children.
---       case tokParent result of
---         Nothing -> error "PANIC (12): Dtt ??? Here ???!!!"
---         Just t  -> modifyTVar' (tokChildren t) (Set.delete result)
---   {-# INLINE nodeSpecificTokRemoval #-}
+deleteBtok :: Btok -> STM ()
+deleteBtok Btok { btokNode = bmem }  =
+  whenM (nullTSet (bmemToks bmem)) $ -- No items in here, so ...
+    forMM_ (toListT (bmemChildren bmem)) $ \join ->
+      -- ... let's right unlink children.
+      rightUnlink (JoinSuccessor join)
+{-# INLINE deleteBtok #-}
 
--- instance NodeSpecificTokRemoval Partner where
---   nodeSpecificTokRemoval env partner tok = do
---     maybeOwner <- readTVar (tokOwner tok)
---     case maybeOwner of
---       Nothing    -> error "PANIC (13): tok.owner IS NIL (Nothing)."
---       Just owner -> do
---         -- Remove tok from tok.owner.ncc-results.
---         nccResults <- readTVar (tokNccResults owner)
---         let updatedNccResults = Set.delete tok nccResults
---         writeTVar (tokNccResults owner) updatedNccResults
+deleteNtok :: Ntok -> STM ()
+deleteNtok ntok = do
+  let neg = ntokNode ntok
+  whenM (nullTSet (negToks neg)) $ rightUnlink (NegSuccessor neg)
 
---         -- If tok.owner.ncc-results is nil ...
---         when (Set.null updatedNccResults) $
---           -- .. left activate partner.ncc.children
---           forMM_ (toListT (nccChildren (partnerNcc partner))) $ \child ->
---             leftActivateCondChild env child owner Nothing
---   {-# INLINE nodeSpecificTokRemoval #-}
+  -- For jr in tok.(neg)-join-results ...
+  forMM_ (toListT (ntokNegJoinResults ntok)) $ \jr ->
+    -- ... remove jr from jr.wme.negative-join-results.
+    modifyTVar' (wmeNegJoinResults (njrWme jr)) (Set.delete jr)
+{-# INLINE deleteNtok #-}
 
--- instance NodeSpecificTokRemoval Prod where
---   nodeSpecificTokRemoval env prod tok = case prodRevokeAction prod of
---     -- Let's just fire a proper action (if present).
---     Nothing     -> return ()
---     Just action -> action (Actx env prod tok (tokWmes tok))
---   {-# INLINE nodeSpecificTokRemoval #-}
+deletePtok :: Env -> Ptok -> STM ()
+deletePtok env ptok = case prodRevokeAction (ptokNode ptok) of
+  -- Let's just fire a proper action (if present).
+  Nothing     -> return ()
+  Just action -> action (Actx env (ptokNode ptok) ptok (tokWmes ptok))
+{-# INLINE deletePtok #-}

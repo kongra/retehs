@@ -313,7 +313,15 @@ instance Hashable Ptok where
 -- | A token potentially holding a Wme.
 data WmeTok = BmemWmeTok !Btok
             | NegWmeTok  !Ntok
-            | ProdWmeTok !Ptok
+            | ProdWmeTok !Ptok deriving Eq
+
+instance Hashable WmeTok where
+  hashWithSalt salt tok = case tok of
+    BmemWmeTok btok -> salt `hashWithSalt` btok
+    NegWmeTok  ntok -> salt `hashWithSalt` ntok
+    ProdWmeTok ptok -> salt `hashWithSalt` ptok
+  {-# INLINE hashWithSalt #-}
+
 
 type JoinTok = Either Dtt Btok
 
