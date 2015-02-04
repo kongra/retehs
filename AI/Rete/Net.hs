@@ -21,7 +21,7 @@ import           Control.Monad (forM_, liftM, unless)
 import           Data.Foldable (toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
-import           Data.Maybe (isJust, fromJust)
+import           Data.Maybe (isJust, fromJust, fromMaybe)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (whenM)
 import           Safe (headMay)
@@ -39,14 +39,14 @@ isVariable (Const _) = False
 -- | Searches for an existing alpha memory for the given symbols or
 -- creates a new one.
 buildOrShareAmem :: Env -> Symbol -> Symbol -> Symbol -> STM Amem
-buildOrShareAmem env obj attr val = do
-  let w     = Const wildcardConstant
-      obj'  = Obj  $ if isVariable obj  then w else obj
-      attr' = Attr $ if isVariable attr then w else attr
-      val'  = Val  $ if isVariable val  then w else val
+buildOrShareAmem env o a v = do
+  let w  = Const wildcardConstant
+      o' = Obj  $ if isVariable o then w else o
+      a' = Attr $ if isVariable a then w else a
+      v' = Val  $ if isVariable v then w else v
 
   amems <- readTVar (envAmems env)
-  let k = WmeKey obj' attr' val'
+  let k = WmeKey o' a' v'
 
   case Map.lookup k amems of
     Just amem -> return amem -- Happily found.
@@ -60,9 +60,9 @@ buildOrShareAmem env obj attr val = do
       wmesByAttr <- newTVar Map.empty
       wmesByVal  <- newTVar Map.empty
 
-      let amem = Amem { amemObj            = obj'
-                      , amemAttr           = attr'
-                      , amemVal            = val'
+      let amem = Amem { amemObj            = o'
+                      , amemAttr           = a'
+                      , amemVal            = v'
                       , amemSuccessors     = successors
                       , amemReferenceCount = refCount
                       , amemWmes           = wmes
@@ -73,21 +73,21 @@ buildOrShareAmem env obj attr val = do
       -- Put amem into the env registry of Amems.
       writeTVar (envAmems env) $! Map.insert k amem amems
 
-      activateAmemOnCreation env amem obj' attr' val'
+      activateAmemOnCreation env amem o' a' v'
       return amem
 
 -- | A simplified, more effective version of amem activation that
 -- takes place on the amem creation. No successors activation here,
 -- cause no successors present.
 activateAmemOnCreation :: Env -> Amem -> Obj -> Attr -> Val -> STM ()
-activateAmemOnCreation env amem obj attr val = do
+activateAmemOnCreation env amem o a v = do
   byObjIndex  <- readTVar (envWmesByObj  env)
   byAttrIndex <- readTVar (envWmesByAttr env)
   byValIndex  <- readTVar (envWmesByVal  env)
 
-  let wmesMatchingByObj  = Map.lookupDefault Set.empty obj  byObjIndex
-      wmesMatchingByAttr = Map.lookupDefault Set.empty attr byAttrIndex
-      wmesMatchingByVal  = Map.lookupDefault Set.empty val  byValIndex
+  let wmesMatchingByObj  = Map.lookupDefault Set.empty o byObjIndex
+      wmesMatchingByAttr = Map.lookupDefault Set.empty a byAttrIndex
+      wmesMatchingByVal  = Map.lookupDefault Set.empty v byValIndex
       wmesMatching       = wmesMatchingByObj  `Set.intersection`
                            wmesMatchingByAttr `Set.intersection`
                            wmesMatchingByVal
@@ -133,7 +133,7 @@ buildOrShareBmem env parent = do
       updateFromAbove env bmem parent
       return bmem
 
--- PROCESSING CONDS FOR PRODUCTION CREATION
+-- MISC. CONDS OPERATIONS
 
 type IndexedPosCond = (Int, PosCond)
 type IndexedNegCond = (Int, NegCond)
@@ -151,10 +151,10 @@ indexedNegConds start = zip [start ..]
 -- | Returns a field within the PosCond that is equal to the passed
 -- Symbol.
 fieldEqualTo :: PosCond -> Symbol -> Maybe Field
-fieldEqualTo (PosCond (Obj obj) (Attr attr) (Val val)) s
-  | obj  == s = Just O
-  | attr == s = Just A
-  | val  == s = Just V
+fieldEqualTo (PosCond (Obj o) (Attr a) (Val v)) s
+  | o == s    = Just O
+  | a == s    = Just A
+  | v == s    = Just V
   | otherwise = Nothing
 {-# INLINE fieldEqualTo #-}
 
@@ -177,23 +177,21 @@ joinTestForField i v field earlierConds
 {-# INLINE joinTestForField #-}
 
 joinTestsForPosCond :: IndexedPosCond -> [IndexedPosCond] -> [JoinTest]
-joinTestsForPosCond (i, PosCond obj attr val) =
-  joinTestsForCondImpl i obj attr val
+joinTestsForPosCond (i, PosCond o a v) = joinTestsForCondImpl i o a v
 {-# INLINE joinTestsForPosCond #-}
 
 joinTestsForNegCond :: IndexedNegCond -> [IndexedPosCond] -> [JoinTest]
-joinTestsForNegCond (i, NegCond obj attr val) =
-  joinTestsForCondImpl i obj attr val
+joinTestsForNegCond (i, NegCond o a v) = joinTestsForCondImpl i o a v
 {-# INLINE joinTestsForNegCond #-}
 
 joinTestsForCondImpl :: Int -> Obj -> Attr -> Val
                      -> [IndexedPosCond] -> [JoinTest]
-joinTestsForCondImpl i (Obj obj) (Attr attr) (Val val) earlierConds =
+joinTestsForCondImpl i (Obj o) (Attr a) (Val v) earlierConds =
   result3
   where
-    test1   = joinTestForField i obj  O earlierConds
-    test2   = joinTestForField i attr A earlierConds
-    test3   = joinTestForField i val  V earlierConds
+    test1   = joinTestForField i o O earlierConds
+    test2   = joinTestForField i a A earlierConds
+    test3   = joinTestForField i v V earlierConds
 
     result1 = [fromJust test3 | isJust test3]
     result2 = if isJust test2 then fromJust test2 : result1 else result1
@@ -369,3 +367,98 @@ instance UpdateFromAbove Bmem Join where updateFromAbove = undefined
 
 instance UpdateFromAbove Neg (Either Join Neg) where
   updateFromAbove = undefined
+
+-- CREATING CONDITIONS
+
+type FieldProducer a = Env -> STM a
+
+-- | Positive condition.
+data C = C !(FieldProducer Obj) !(FieldProducer Attr) !(FieldProducer Val)
+
+-- | Negative (not) condition.
+data N = N !(FieldProducer Obj) !(FieldProducer Attr) !(FieldProducer Val)
+
+-- | Creates a positive condition.
+c :: (Symbolic o, Symbolic a, Symbolic v) => o -> a -> v -> C
+c o a v = C (toObj o) (toAttr a) (toVal v)
+{-# INLINE c #-}
+
+-- | Creates a negative (not) condition.
+n :: (Symbolic o, Symbolic a, Symbolic v) => o -> a -> v -> N
+n o a v = N (toObj o) (toAttr a) (toVal v)
+{-# INLINE n #-}
+
+-- ADDING PRODUCTIONS
+
+class AddProduction e where
+  -- | Adds a new production in the current context represented by e.
+  addProduction  :: e -> C -> [C] -> [N] -> Action -> STM Prod
+
+  -- | Works like addProduction but allows to define a revoke action.
+  addProductionR :: e -> C -> [C] -> [N]
+                 -> Action  -- ^ Action
+                 -> Action  -- ^ Revoke Action
+                 -> STM Prod
+
+-- CONFIGURING AND ACCESSING VARIABLE BINDINGS (IN ACTIONS)
+
+variableBindingsForConds :: Int -> [IndexedPosCond] -> Bindings
+variableBindingsForConds tokLen = loop Map.empty
+  where
+    loop result []                                           = result
+    loop result ((i, PosCond (Obj o) (Attr a) (Val v)) : cs) =
+      loop result3 cs
+      where
+        result1 = variableBindingsForCond o O d result
+        result2 = variableBindingsForCond a A d result1
+        result3 = variableBindingsForCond v V d result2
+        d       = tokLen - i - 1
+{-# INLINE variableBindingsForConds #-}
+
+variableBindingsForCond :: Symbol -> Field -> Int -> Bindings -> Bindings
+variableBindingsForCond s f d result = case s of
+  -- For constants leave the resulting bindings untouched.
+  Const _ -> result
+  -- For vars avoid overriding existing bindings.
+  Var   v -> if   Map.member v result    then result
+             else Map.insert v (Location d f) result
+{-# INLINE variableBindingsForCond #-}
+
+-- | A value of a variable inside an action.
+data VarVal = VarVal             !Symbol
+            | UnrecognizedSymbol !String
+            | ConstNotVar        !Constant
+            | NoVarVal           !Variable
+
+val :: Actx -> String -> STM VarVal
+val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } s = do
+  is <- internedSymbol env s
+  case is of
+    Nothing -> return (UnrecognizedSymbol s)
+    Just s' -> case s' of
+      Const c' -> return (ConstNotVar c')
+      Var   v  -> case Map.lookup v (prodBindings prod) of
+        Nothing -> return (NoVarVal v)
+        Just (Location d f) ->
+          return (VarVal
+                  (fieldSymbol f
+                   (fromMaybe (error "PANIC (4): wmes !! d RETURNED Nothing.")
+                    (wmes !! d))))
+
+-- | Works like val, but raises an early error instead of returning a VarVal.
+valE :: Actx -> String -> STM Symbol
+valE actx s = do
+  result <- val actx s
+  case result of
+    VarVal             v  -> return v
+    UnrecognizedSymbol s' -> error ("PANIC (5): UNRECOGNIZED SYMBOL " ++      s')
+    ConstNotVar        s' -> error ("PANIC (6): CONST, NOT A VAR "    ++ show s')
+    NoVarVal           v' -> error ("PANIC (7): NO VALUE FOR VAR "    ++ show v')
+
+-- | Works like valE, but returns Nothing instead of raising an error.
+valM :: Actx -> String -> STM (Maybe Symbol)
+valM actx s = do
+  result <- val actx s
+  case result of
+    VarVal v -> return (Just v)
+    _        -> return Nothing

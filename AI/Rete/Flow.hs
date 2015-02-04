@@ -104,19 +104,19 @@ feedEnvIndexes
   Env     { envWmesByObj  = byObj
           , envWmesByAttr = byAttr
           , envWmesByVal  = byVal }
-  wme@Wme { wmeObj        = obj
-          , wmeAttr       = attr
-          , wmeVal        = val } = do
+  wme@Wme { wmeObj        = o
+          , wmeAttr       = a
+          , wmeVal        = v } = do
 
     let w = Const wildcardConstant
 
-    modifyTVar' byObj  (wmesIndexInsert obj      wme)
+    modifyTVar' byObj  (wmesIndexInsert o        wme)
     modifyTVar' byObj  (wmesIndexInsert (Obj w)  wme)
 
-    modifyTVar' byAttr (wmesIndexInsert attr     wme)
+    modifyTVar' byAttr (wmesIndexInsert a        wme)
     modifyTVar' byAttr (wmesIndexInsert (Attr w) wme)
 
-    modifyTVar' byVal  (wmesIndexInsert val      wme)
+    modifyTVar' byVal  (wmesIndexInsert v        wme)
     modifyTVar' byVal  (wmesIndexInsert (Val w)  wme)
 {-# INLINE feedEnvIndexes #-}
 
@@ -125,19 +125,19 @@ deleteFromEnvIndexes
   Env     { envWmesByObj  = byObj
           , envWmesByAttr = byAttr
           , envWmesByVal  = byVal}
-  wme@Wme { wmeObj        = obj
-          , wmeAttr       = attr
-          , wmeVal        = val } = do
+  wme@Wme { wmeObj        = o
+          , wmeAttr       = a
+          , wmeVal        = v } = do
 
     let w = Const wildcardConstant
 
-    modifyTVar' byObj  (wmesIndexDelete obj      wme)
+    modifyTVar' byObj  (wmesIndexDelete o        wme)
     modifyTVar' byObj  (wmesIndexDelete (Obj w)  wme)
 
-    modifyTVar' byAttr (wmesIndexDelete attr     wme)
+    modifyTVar' byAttr (wmesIndexDelete a        wme)
     modifyTVar' byAttr (wmesIndexDelete (Attr w) wme)
 
-    modifyTVar' byVal  (wmesIndexDelete val      wme)
+    modifyTVar' byVal  (wmesIndexDelete v        wme)
     modifyTVar' byVal  (wmesIndexDelete (Val w)  wme)
 {-# INLINE deleteFromEnvIndexes #-}
 
@@ -203,6 +203,18 @@ instance Symbolic String where
   {-# INLINE internSymbol   #-}
   {-# INLINE internedSymbol #-}
 
+toObj :: (Symbolic o) => o -> Env -> STM Obj
+toObj o env = liftM Obj (internSymbol env o)
+{-# INLINE toObj #-}
+
+toAttr :: (Symbolic a) => a -> Env -> STM Attr
+toAttr a env = liftM Attr (internSymbol env a)
+{-# INLINE toAttr #-}
+
+toVal :: (Symbolic v) => v -> Env -> STM Val
+toVal v env = liftM Val (internSymbol env v)
+{-# INLINE toVal #-}
+
 data SymbolName = EmptyConst
                 | EmptyVar
                 | OneCharConst
@@ -259,6 +271,22 @@ internedVariable Env { envVariables = vars } name = do
     Just v  -> return $! Just (Var v)
 {-# INLINE internedVariable #-}
 
+intern3 :: (Symbolic o, Symbolic a, Symbolic v)
+        => Env -> o -> a -> v -> STM (Symbol, Symbol, Symbol)
+intern3 env o a v = do
+  o' <- internSymbol env o
+  a' <- internSymbol env a
+  v' <- internSymbol env v
+  return (o', a', v')
+{-# INLINE intern3 #-}
+
+internFields :: (Symbolic o, Symbolic a, Symbolic v)
+             => Env -> o -> a -> v -> STM (Obj, Attr, Val)
+internFields env o a v = do
+  (o', a', v') <- intern3 env o a v
+  return (Obj o', Attr a', Val v')
+{-# INLINE internFields #-}
+
 -- ALPHA MEMORY
 
 -- | Activates the alpha memory by passing it a wme.
@@ -280,50 +308,48 @@ activateAmem env amem wme = do
 
 -- WMES
 
--- | Adds a new fact represented by three fields and returns its Wme.
--- When a Wme already exists in the system, does and returns Nothing.
-addWme :: (Symbolic a, Symbolic b, Symbolic c) =>
-          Env -> a -> b -> c -> STM (Maybe Wme)
-addWme env obj attr val = do
-  obj'  <- internSymbol env obj
-  attr' <- internSymbol env attr
-  val'  <- internSymbol env val
+class AddWme e where
+  -- | Adds a new fact represented by three fields and returns its Wme.
+  -- When a Wme already exists in the system, does and returns Nothing.
+  addWme :: (Symbolic a, Symbolic b, Symbolic c)
+         => e -> a -> b -> c -> STM (Maybe Wme)
 
-  let k = WmeKey (Obj obj') (Attr attr') (Val val')
-  wmes <- readTVar (envWmes env)
-  if Map.member k wmes
-    then return Nothing -- Already present, do nothing.
-    else do
-      wme <- createWme env (Obj obj') (Attr attr') (Val val')
+instance AddWme Env where
+  addWme env o a v = do
+    (o', a', v') <- intern3 env o a v
+    let k = WmeKey (Obj o') (Attr a') (Val v')
+    wmes <- readTVar (envWmes env)
+    if Map.member k wmes
+      then return Nothing -- Already present, do nothing.
+      else do
+        wme <- createWme env (Obj o') (Attr a') (Val v')
 
-      -- Add wme to envWmes under k.
-      writeTVar (envWmes env) $! Map.insert k wme wmes
+        -- Add wme to envWmes under k.
+        writeTVar (envWmes env) $! Map.insert k wme wmes
 
-      -- Add wme to env indexes (including wildcard key).
-      feedEnvIndexes env wme
+        -- Add wme to env indexes (including wildcard key).
+        feedEnvIndexes env wme
 
-      -- Propagate wme into amems and return.
-      feedAmems env wme (Obj obj') (Attr attr') (Val val')
-      return (Just wme)
+        -- Propagate wme into amems and return.
+        feedAmems env wme (Obj o') (Attr a') (Val v')
+        return (Just wme)
 
--- | Works like addWme inside an action (of a production).
-addWmeA :: (Symbolic a, Symbolic b, Symbolic c) =>
-           Actx -> a -> b -> c -> STM (Maybe Wme)
-addWmeA actx = addWme (actxEnv actx)
-{-# INLINE addWmeA #-}
+instance AddWme Actx where
+  addWme actx = addWme (actxEnv actx)
+  {-# INLINE addWme #-}
 
 -- | Creates an empty Wme.
 createWme :: Env -> Obj -> Attr -> Val -> STM Wme
-createWme env obj attr val = do
+createWme env o a v = do
   id'       <- genid env
   amems     <- newTVar []
   toks      <- newTVar Set.empty
   njResults <- newTVar Set.empty
 
   return Wme { wmeId             = id'
-             , wmeObj            = obj
-             , wmeAttr           = attr
-             , wmeVal            = val
+             , wmeObj            = o
+             , wmeAttr           = a
+             , wmeVal            = v
              , wmeAmems          = amems
              , wmeToks           = toks
              , wmeNegJoinResults = njResults }
@@ -759,35 +785,36 @@ nodeAmem = successorProp joinAmem negAmem
 
 -- REMOVING WMES
 
--- | Removes the fact described by 3 symbols. Returns True on success
--- and False when the fact was not present in the system.
-removeWme :: (Symbolic a, Symbolic b, Symbolic c) =>
-             Env -> a -> b -> c -> STM Bool
-removeWme env obj attr val = do
-  obj'  <- internedSymbol env obj
-  attr' <- internedSymbol env attr
-  val'  <- internedSymbol env val
+class RemoveWme e where
+  -- | Removes the fact described by 3 symbols. Returns True on success
+  -- and False when the fact was not present in the system.
+  removeWme :: (Symbolic a, Symbolic b, Symbolic c)
+            => e -> a -> b -> c -> STM Bool
 
-  if isJust obj' && isJust attr' && isJust val'
-    then removeWmeImpl env
-                       (Obj  (fromJust obj' ))
-                       (Attr (fromJust attr'))
-                       (Val  (fromJust val' ))
+instance RemoveWme Env where
+  removeWme env o a v = do
+    o' <- internedSymbol env o
+    a' <- internedSymbol env a
+    v' <- internedSymbol env v
 
-    -- At least 1 of the names didn't have a corresponding interned
-    -- symbol, the wme can't exist.
-    else return False
+    if isJust o' && isJust a' && isJust v'
+      then removeWmeImpl env
+                         (Obj  (fromJust o'))
+                         (Attr (fromJust a'))
+                         (Val  (fromJust v'))
 
--- | Works like 'removeWme' inside an 'Action' (of a production).
-removeWmeA :: (Symbolic a, Symbolic b, Symbolic c) =>
-              Actx -> a -> b -> c -> STM Bool
-removeWmeA actx = removeWme (actxEnv actx)
-{-# INLINE removeWmeA #-}
+      -- At least 1 of the names didn't have a corresponding interned
+      -- symbol, the wme can't exist.
+      else return False
+
+instance RemoveWme Actx where
+  removeWme actx = removeWme (actxEnv actx)
+  {-# INLINE removeWme #-}
 
 removeWmeImpl :: Env -> Obj -> Attr -> Val -> STM Bool
-removeWmeImpl env obj attr val = do
+removeWmeImpl env o a v = do
   wmes <- readTVar (envWmes env)
-  let k = WmeKey obj attr val
+  let k = WmeKey o a v
   case Map.lookup k wmes of
     Nothing -> return False
     Just wme -> do
@@ -795,18 +822,18 @@ removeWmeImpl env obj attr val = do
       writeTVar (envWmes env) $! Map.delete k wmes
       deleteFromEnvIndexes env wme
       -- ... and propagate down the network.
-      propagateWmeRemoval env wme obj attr val
+      propagateWmeRemoval env wme o a v
       return True
 {-# INLINE removeWmeImpl #-}
 
 propagateWmeRemoval :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
-propagateWmeRemoval env wme obj attr val = do
+propagateWmeRemoval env wme o a v = do
   -- For every amem this wme belongs to ...
   forMM_ (readTVar (wmeAmems wme)) $ \amem -> do
     -- ... remove wme from amem indexes.
-    modifyTVar' (amemWmesByObj  amem) (wmesIndexDelete obj  wme)
-    modifyTVar' (amemWmesByAttr amem) (wmesIndexDelete attr wme)
-    modifyTVar' (amemWmesByVal  amem) (wmesIndexDelete val  wme)
+    modifyTVar' (amemWmesByObj  amem) (wmesIndexDelete o wme)
+    modifyTVar' (amemWmesByAttr amem) (wmesIndexDelete a wme)
+    modifyTVar' (amemWmesByVal  amem) (wmesIndexDelete v wme)
     wmes <- readTVar (amemWmes amem)
     let updatedWmes = Set.delete wme wmes
     writeTVar (amemWmes amem) updatedWmes

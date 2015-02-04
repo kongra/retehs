@@ -536,14 +536,12 @@ type Action = Actx -> STM ()
 
 -- CONDITIONS
 
--- | Positive condition.
 data PosCond = PosCond !Obj !Attr !Val
 
 instance Show PosCond where
   show (PosCond o a v) = show o ++ " " ++ show a ++ " " ++ show v
   {-# INLINE show #-}
 
--- | Negative condition.
 data NegCond = NegCond !Obj !Attr !Val
 
 instance Show NegCond where
