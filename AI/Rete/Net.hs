@@ -394,11 +394,11 @@ class AddProduction e where
   -- | Adds a new production in the current context represented by e.
   addProduction  :: e -> C -> [C] -> [N] -> Action -> STM Prod
 
-  -- | Works like addProduction but allows to define a revoke action.
-  addProductionR :: e -> C -> [C] -> [N]
-                 -> Action  -- ^ Action
-                 -> Action  -- ^ Revoke Action
-                 -> STM Prod
+  -- -- | Works like addProduction but allows to define a revoke action.
+  -- addProductionR :: e -> C -> [C] -> [N]
+  --                -> Action  -- ^ Action
+  --                -> Action  -- ^ Revoke Action
+  --                -> STM Prod
 
 -- CONFIGURING AND ACCESSING VARIABLE BINDINGS (IN ACTIONS)
 
@@ -425,40 +425,43 @@ variableBindingsForCond s f d result = case s of
 {-# INLINE variableBindingsForCond #-}
 
 -- | A value of a variable inside an action.
-data VarVal = VarVal             !Symbol
-            | UnrecognizedSymbol !String
-            | ConstNotVar        !Constant
-            | NoVarVal           !Variable
+data VarVal = ValidVarVal   !Symbol
+            | UnknownSymbol !String
+            | ConstNotVar   !Constant
+            | NoVarVal      !Variable
 
+instance Show VarVal where
+  show (ValidVarVal   s ) = show s
+  show (UnknownSymbol s ) = "ERROR (1): UNKNOWN SYMBOL "   ++      s  ++ "."
+  show (ConstNotVar   c') = "ERROR (2): CONST, NOT VAR "   ++ show c' ++ "."
+  show (NoVarVal      v ) = "ERROR (3): NO VALUE FOR VAR " ++ show v  ++ "."
+  {-# INLINE show #-}
+
+-- | Returns a value of a variable inside an Action.
 val :: Actx -> String -> STM VarVal
 val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } s = do
   is <- internedSymbol env s
   case is of
-    Nothing -> return (UnrecognizedSymbol s)
+    Nothing -> return (UnknownSymbol s)
     Just s' -> case s' of
       Const c' -> return (ConstNotVar c')
       Var   v  -> case Map.lookup v (prodBindings prod) of
-        Nothing -> return (NoVarVal v)
+        Nothing             -> return (NoVarVal v)
         Just (Location d f) ->
-          return (VarVal
+          return (ValidVarVal
                   (fieldSymbol f
                    (fromMaybe (error "PANIC (4): wmes !! d RETURNED Nothing.")
-                    (wmes !! d))))
+                              (wmes !! d))))
 
--- | Works like val, but raises an early error instead of returning a VarVal.
+-- | Works like val, but raises an early error when a valid value
+-- can't be returned.
 valE :: Actx -> String -> STM Symbol
 valE actx s = do
   result <- val actx s
-  case result of
-    VarVal             v  -> return v
-    UnrecognizedSymbol s' -> error ("PANIC (5): UNRECOGNIZED SYMBOL " ++      s')
-    ConstNotVar        s' -> error ("PANIC (6): CONST, NOT A VAR "    ++ show s')
-    NoVarVal           v' -> error ("PANIC (7): NO VALUE FOR VAR "    ++ show v')
+  case result of { ValidVarVal v -> return v; _ -> error (show result) }
 
 -- | Works like valE, but returns Nothing instead of raising an error.
 valM :: Actx -> String -> STM (Maybe Symbol)
 valM actx s = do
   result <- val actx s
-  case result of
-    VarVal v -> return (Just v)
-    _        -> return Nothing
+  case result of { ValidVarVal v -> return (Just v); _ -> return Nothing }
