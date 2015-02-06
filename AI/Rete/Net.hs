@@ -17,14 +17,15 @@ module AI.Rete.Net where
 import           AI.Rete.Data
 import           AI.Rete.Flow
 import           Control.Concurrent.STM
-import           Control.Monad (forM_, liftM, liftM3, unless)
+import           Control.Monad (forM_, liftM, liftM3, unless, when)
 import           Data.Foldable (toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Maybe (isJust, fromJust, fromMaybe)
 import qualified Data.Sequence as Seq
-import           Kask.Control.Monad (whenM, forMM_)
+import           Kask.Control.Monad (whenM, forMM_, unlessM)
 import           Kask.Data.List (nthDef)
+import           Kask.Data.Sequence (removeFirstOccurence)
 import           Safe (headMay)
 
 class IsVariable a where isVariable :: a -> Bool
@@ -34,14 +35,17 @@ instance IsVariable Symbol where
   isVariable (Const _) = False
   {-# INLINE isVariable #-}
 
-instance IsVariable Obj  where isVariable (Obj s)  = isVariable s
-                               {-# INLINE isVariable #-}
+instance IsVariable Obj where
+  isVariable (Obj s)  = isVariable s
+  {-# INLINE isVariable #-}
 
-instance IsVariable Attr where isVariable (Attr s) = isVariable s
-                               {-# INLINE isVariable #-}
+instance IsVariable Attr where
+  isVariable (Attr s) = isVariable s
+  {-# INLINE isVariable #-}
 
-instance IsVariable Val  where isVariable (Val s)  = isVariable s
-                               {-# INLINE isVariable #-}
+instance IsVariable Val where
+  isVariable (Val s)  = isVariable s
+  {-# INLINE isVariable #-}
 
 -- AMEM CREATION
 
@@ -400,7 +404,7 @@ toNegCond env (N o a v) = liftM3 NegCond (o env) (a env) (v env)
 
 class AddProd e where
   -- | Adds a new production in the current context represented by e.
-  addProd  :: e -> C -> [C] -> [N] -> Action -> STM Prod
+  addProd :: e -> C -> [C] -> [N] -> Action -> STM Prod
 
   -- | Works like addProd but allows to define a revoke action.
   addProdR :: e -> C -> [C] -> [N] -> Action
@@ -616,7 +620,7 @@ updateFromJoin env parent setChild = do
   forMM_ (toListT (amemWmes (joinAmem parent))) $ \wme ->
     rightActivateJoin env parent wme
 
-  -- Restore children.
+  -- Restore saved children.
   writeTVar (joinBmem  parent) bmem
   writeTVar (joinNegs  parent) negs
   writeTVar (joinProds parent) prods
@@ -625,3 +629,150 @@ updateFromNeg :: Neg -> (Ntok -> STM()) -> STM ()
 updateFromNeg parent f = forMM_ (toListT (negToks parent)) $ \tok ->
   whenM (nullTSet (ntokNegJoinResults tok)) $ f tok
 {-# INLINE updateFromNeg #-}
+
+-- DELETING NODES
+
+class DeleteNode a where
+  -- | Deletes the node and any unused ancestor.
+  deleteNode :: Env -> a -> STM ()
+
+instance DeleteNode Bmem where
+  deleteNode env bmem = do
+    -- Delete all tokens. There is no need to unbind toks from this
+    -- node, it will be deleted anyway.
+    forMM_ (toListT (bmemToks bmem)) $ \btok ->
+      deleteTokAndDescendents env (BmemWmeTok btok)
+        RemoveFromParent RemoveFromWme DontRemoveFromNode
+
+    -- Unbind node from its parent.
+    let parent = bmemParent bmem
+    writeTVar (joinBmem parent) Nothing
+
+    -- If parent has no children, delete it too.
+    children <- joinChildren parent
+    when (nullJoinChildren children) $ deleteNode env parent
+
+instance DeleteNode Join where
+  deleteNode env join = do
+    let amem = joinAmem join
+    -- If join is NOT rightUnlinked, remove it from amem.successors.
+    unlessM (readTVar (joinRightUnlinked join)) $
+      modifyTVar' (amemSuccessors amem)
+                  (removeFirstOccurence (JoinSuccessor join))
+
+    -- If amem.referenceCount is 1 (this join), delete amem
+    -- else decrement amem.referenceCount.
+    rcount <- readTVar (amemReferenceCount amem)
+    if rcount == 1
+      then deleteAmem env amem
+      else writeTVar (amemReferenceCount amem) $! rcount - 1
+
+    -- If join is NOT leftUnlinked, remove it from its parent ...
+    let parent = joinParent join
+    unlessM (readTVar (joinLeftUnlinked join)) $ case parent of
+      Right bmem -> modifyTVar' (bmemChildren bmem) (Set.delete join)
+      Left  _    -> return ()  -- ... but not from Dtn (has no children).
+
+    -- Remove join from parent.allChildren.
+    -- If parent.allChildren is nil, delete parent (not Dtn).
+    let allChildrenVar = case parent of
+                           Right bmem -> bmemAllChildren bmem
+                           Left  dtn  -> dtnAllChildren  dtn
+    allChildren <- readTVar allChildrenVar
+    let allChildren' = Map.delete k allChildren
+        k            = AmemSuccessorKey amem (joinTests join)
+    if Map.null allChildren'
+      then (case parent of
+              Right bmem -> deleteNode env bmem
+              Left  _    -> return ())  -- Dtn must be kept.
+      else writeTVar allChildrenVar allChildren'
+
+instance DeleteNode Neg where
+  deleteNode env neg = do
+    -- Delete all tokens. There is no need to unbind toks from this
+    -- node, it will be deleted anyway.
+    forMM_ (toListT (negToks neg)) $ \ntok ->
+      deleteTokAndDescendents env (NegWmeTok ntok)
+        RemoveFromParent RemoveFromWme DontRemoveFromNode
+
+    let amem = negAmem neg
+    -- If neg is NOT rightUnlinked, remove it from amem.successors.
+    unlessM (readTVar (negRightUnlinked neg)) $
+      modifyTVar' (amemSuccessors amem)
+                  (removeFirstOccurence (NegSuccessor neg))
+
+    -- If amem.referenceCount is 1 (this neg), delete amem
+    -- else decrement amem.referenceCount
+    rcount <- readTVar (amemReferenceCount amem)
+    if rcount == 1
+      then deleteAmem env amem
+      else writeTVar (amemReferenceCount amem) $! rcount - 1
+
+    -- Unbind prod from its parent.
+    let parent = negParent neg
+        k      = AmemSuccessorKey amem (negTests neg)
+    case parent of
+      Left  join -> modifyTVar' (joinNegs join) (Map.delete k)
+      Right neg' -> modifyTVar' (negNegs  neg') (Map.delete k)
+
+    -- If parent has no children, delete it too.
+    case parent of
+      Left join -> do
+        children <- joinChildren join
+        when (nullJoinChildren children) $ deleteNode env join
+
+      Right neg' -> do
+        children <- negChildren neg'
+        when (nullNegChildren children) $ deleteNode env neg'
+
+instance DeleteNode Prod where
+  deleteNode env prod = do
+    -- Delete all tokens. There is no need to unbind toks from this
+    -- node, it will be deleted anyway.
+    forMM_ (toListT (prodToks prod)) $ \ptok ->
+      deleteTokAndDescendents env (ProdWmeTok ptok)
+        RemoveFromParent RemoveFromWme DontRemoveFromNode
+
+    -- Unbind prod from its parent.
+    case prodParent prod of
+      Left  join -> modifyTVar' (joinProds join) (Set.delete prod)
+      Right neg  -> modifyTVar' (negProds  neg ) (Set.delete prod)
+
+    -- If prod.parent has no children, delete it too.
+    case prodParent prod of
+      Left join -> do
+        children <- joinChildren join
+        when (nullJoinChildren children) $ deleteNode env join
+
+      Right neg -> do
+        children <- negChildren neg
+        when (nullNegChildren children) $ deleteNode env neg
+
+deleteAmem :: Env -> Amem -> STM ()
+deleteAmem
+  Env  { envAmems = amems }
+  Amem { amemObj  = o
+       , amemAttr = a
+       , amemVal  = v     } = modifyTVar' amems (Map.delete (WmeKey o a v))
+{-# INLINE deleteAmem #-}
+
+-- REMOVING PRODUCTIONS
+
+class RemoveProd e where
+  -- | Removes a production represented by the production
+  -- node. Returns True unless the production was already removed.
+  removeProd :: e -> Prod -> STM Bool
+
+instance RemoveProd Env where
+  removeProd env prod = do
+    prods <- readTVar (envProds env)
+    if Set.member prod prods then
+      (do  writeTVar (envProds env) $! Set.delete prod prods
+           deleteNode env prod
+           return True)
+
+      else return False
+
+instance RemoveProd Actx where
+  removeProd Actx { actxEnv = env } = removeProd env
+  {-# INLINE removeProd #-}

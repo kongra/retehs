@@ -847,7 +847,8 @@ propagateWmeRemoval env wme o a v = do
   -- Delete all tokens wme is in. We remove every token from it's
   -- parent token but avoid removing from wme.
   forMM_ (toListT (wmeToks wme)) $ \tok ->
-    deleteTokAndDescendents env tok RemoveFromParent DontRemoveFromWme
+    deleteTokAndDescendents env tok
+      RemoveFromParent DontRemoveFromWme RemoveFromNode
 
   -- For every jr in wme.negative-join-results ...
   forMM_ (toListT (wmeNegJoinResults wme)) $ \jr -> do
@@ -866,8 +867,9 @@ propagateWmeRemoval env wme o a v = do
 
 -- DELETING TOKS
 
-data TokTokPolicy = RemoveFromParent | DontRemoveFromParent deriving Eq
-data TokWmePolicy = RemoveFromWme    | DontRemoveFromWme    deriving Eq
+data TokTokPolicy  = RemoveFromParent | DontRemoveFromParent deriving Eq
+data TokWmePolicy  = RemoveFromWme    | DontRemoveFromWme    deriving Eq
+data TokNodePolicy = RemoveFromNode   | DontRemoveFromNode   deriving Eq
 
 -- | Deletes the descendents of the passed token.
 deleteDescendentsOfTok :: Env -> WmeTok -> STM ()
@@ -877,7 +879,8 @@ deleteDescendentsOfTok env tok = case tok of
     unless (Set.null children) $ do
       writeTVar (btokChildren btok) Set.empty
       forM_ (toList children) $ \child ->
-        deleteTokAndDescendents env child DontRemoveFromParent RemoveFromWme
+        deleteTokAndDescendents env child
+          DontRemoveFromParent RemoveFromWme RemoveFromNode
 
   NegWmeTok ntok -> do
     children <- readTVar (ntokChildren ntok)
@@ -887,15 +890,19 @@ deleteDescendentsOfTok env tok = case tok of
         let c = case child of
               Left  nt -> NegWmeTok  nt
               Right pt -> ProdWmeTok pt
-        deleteTokAndDescendents env c DontRemoveFromParent RemoveFromWme
+        deleteTokAndDescendents env c
+          DontRemoveFromParent RemoveFromWme RemoveFromNode
 
   ProdWmeTok _ -> return () -- No children, do nothing.
 
 -- | Deletes the token and it's descendents.
-deleteTokAndDescendents :: Env -> WmeTok -> TokTokPolicy -> TokWmePolicy -> STM ()
-deleteTokAndDescendents env tok tokPolicy wmePolicy = do
+deleteTokAndDescendents :: Env -> WmeTok
+                        -> TokTokPolicy -> TokWmePolicy -> TokNodePolicy
+                        -> STM ()
+deleteTokAndDescendents env tok tokPolicy wmePolicy nodePolicy = do
   deleteDescendentsOfTok env tok
-  removeTokFromItsNode   tok
+
+  when (nodePolicy == RemoveFromNode) $ removeTokFromItsNode tok
 
   when (wmePolicy == RemoveFromWme) $ case tokWme tok of
     Nothing -> return ()
