@@ -16,7 +16,7 @@ module AI.Rete.Flow where
 
 import           AI.Rete.Data
 import           Control.Concurrent.STM
-import           Control.Monad (when, unless, liftM, liftM2, forM_)
+import           Control.Monad (when, unless, liftM, liftM2, liftM3, forM_)
 import           Data.Foldable (Foldable, toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
@@ -24,6 +24,7 @@ import           Data.Hashable (Hashable)
 import           Data.Maybe (fromMaybe, isJust, fromJust, isNothing)
 import qualified Data.Sequence as Seq
 import           Kask.Control.Monad (forMM_, toListM, whenM)
+import           Kask.Data.List (nthDef)
 import           Kask.Data.Sequence
   (removeFirstOccurence, insertBeforeFirstOccurence)
 
@@ -271,21 +272,16 @@ internedVariable Env { envVariables = vars } name = do
     Just v  -> return $! Just (Var v)
 {-# INLINE internedVariable #-}
 
-intern3 :: (Symbolic o, Symbolic a, Symbolic v)
-        => Env -> o -> a -> v -> STM (Symbol, Symbol, Symbol)
-intern3 env o a v = do
-  o' <- internSymbol env o
-  a' <- internSymbol env a
-  v' <- internSymbol env v
-  return (o', a', v')
-{-# INLINE intern3 #-}
-
 internFields :: (Symbolic o, Symbolic a, Symbolic v)
              => Env -> o -> a -> v -> STM (Obj, Attr, Val)
-internFields env o a v = do
-  (o', a', v') <- intern3 env o a v
-  return (Obj o', Attr a', Val v')
+internFields env o a v = liftM3 (,,) (internField env Obj  o)
+                                     (internField env Attr a)
+                                     (internField env Val  v)
 {-# INLINE internFields #-}
+
+internField :: Symbolic a => Env -> (Symbol -> b) -> a -> STM b
+internField env f s = liftM f (internSymbol env s)
+{-# INLINE internField #-}
 
 -- ALPHA MEMORY
 
@@ -316,13 +312,13 @@ class AddWme e where
 
 instance AddWme Env where
   addWme env o a v = do
-    (o', a', v') <- intern3 env o a v
-    let k = WmeKey (Obj o') (Attr a') (Val v')
+    (o', a', v') <- internFields env o a v
+    let k = WmeKey o' a' v'
     wmes <- readTVar (envWmes env)
     if Map.member k wmes
       then return Nothing -- Already present, do nothing.
       else do
-        wme <- createWme env (Obj o') (Attr a') (Val v')
+        wme <- createWme env o' a' v'
 
         -- Add wme to envWmes under k.
         writeTVar (envWmes env) $! Map.insert k wme wmes
@@ -331,7 +327,7 @@ instance AddWme Env where
         feedEnvIndexes env wme
 
         -- Propagate wme into amems and return.
-        feedAmems env wme (Obj o') (Attr a') (Val v')
+        feedAmems env wme o' a' v'
         return (Just wme)
 
 instance AddWme Actx where
@@ -461,10 +457,10 @@ performJoinTests tests tok wme = all (passJoinTest (tokWmes tok) wme) tests
 passJoinTest :: [Maybe Wme] -> Wme -> JoinTest -> Bool
 passJoinTest wmes wme
   JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
-    fieldSymbol f1 wme == fieldSymbol f2 wme2
+    fieldSymbol f1 wme == fieldSymbol f2 wme2'
     where
-      wme2 = fromMaybe (error "PANIC (2): wmes !! d RETURNED Nothing.")
-                       (wmes !! d)
+      wme2  = nthDef    (error ("PANIC (2): ILLEGAL INDEX " ++ show d)) d wmes
+      wme2' = fromMaybe (error  "PANIC (3): wmes !! d RETURNED Nothing.") wme2
 {-# INLINE passJoinTest #-}
 
 -- | Returns a value of a Field in Wme.
@@ -493,9 +489,9 @@ amemWmesForTest wmes amem
       A -> amemWmesForIndex (Attr value) (amemWmesByAttr amem)
       V -> amemWmesForIndex (Val  value) (amemWmesByVal  amem)
     where
-      wme   = fromMaybe (error "PANIC (3): wmes !! d RETURNED Nothing.")
-                        (wmes !! d)
-      value = fieldSymbol f2 wme
+      wme   = nthDef    (error ("PANIC (4): ILLEGAL INDEX " ++ show d)) d wmes
+      wme'  = fromMaybe (error  "PANIC (5): wmes !! d RETURNED Nothing.") wme
+      value = fieldSymbol f2 wme'
 {-# INLINE amemWmesForTest #-}
 
 amemWmesForIndex :: (Hashable a, Eq a) =>

@@ -519,6 +519,10 @@ instance Eq Prod where
   (==) = eqOnId
   {-# INLINE (==) #-}
 
+instance Hashable Prod where
+  hashWithSalt = hashWithId
+  {-# INLINE hashWithSalt #-}
+
 -- ACTIONS
 
 -- | Context of a production action.
