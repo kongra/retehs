@@ -342,7 +342,7 @@ data Amem =
     amemSuccessors :: !(TVar (Seq.Seq AmemSuccessor))
 
     -- | The number of join or negative nodes using this Amem.
-  , amemReferenceCount :: !(TVar Int)
+  , amemRefCount :: !(TVar Int)
 
     -- | The wmes in this Amem (unindexed).
   , amemWmes :: !(TVar (Set.HashSet Wme))

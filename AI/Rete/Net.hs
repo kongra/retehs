@@ -73,15 +73,15 @@ buildOrShareAmem env o a v = do
       wmesByAttr <- newTVar Map.empty
       wmesByVal  <- newTVar Map.empty
 
-      let amem = Amem { amemObj            = o'
-                      , amemAttr           = a'
-                      , amemVal            = v'
-                      , amemSuccessors     = successors
-                      , amemReferenceCount = refCount
-                      , amemWmes           = wmes
-                      , amemWmesByObj      = wmesByObj
-                      , amemWmesByAttr     = wmesByAttr
-                      , amemWmesByVal      = wmesByVal }
+      let amem = Amem { amemObj        = o'
+                      , amemAttr       = a'
+                      , amemVal        = v'
+                      , amemSuccessors = successors
+                      , amemRefCount   = refCount
+                      , amemWmes       = wmes
+                      , amemWmesByObj  = wmesByObj
+                      , amemWmesByAttr = wmesByAttr
+                      , amemWmesByVal  = wmesByVal }
 
       -- Put amem into the env registry of Amems.
       writeTVar (envAmems env) $! Map.insert k amem amems
@@ -275,7 +275,7 @@ buildOrShareDummyJoin env amem = do
       modifyTVar' (amemSuccessors amem) (JoinSuccessor join Seq.<|)
 
       -- Increment amem.referenceCount.
-      modifyTVar' (amemReferenceCount amem) (+1)
+      modifyTVar' (amemRefCount amem) (+1)
 
       return join
 
@@ -316,7 +316,7 @@ buildOrShareJoin env parent amem tests = do
       writeTVar (bmemAllChildren parent) $! Map.insert k join allChildren
 
       -- Increment amem.referenceCount.
-      modifyTVar' (amemReferenceCount amem) (+1)
+      modifyTVar' (amemRefCount amem) (+1)
 
       unless unlinkRight $
         -- Add to front of amem.successors.
@@ -365,7 +365,7 @@ buildOrShareNeg env parent amem tests = do
       modifyTVar' (amemSuccessors amem) (NegSuccessor neg Seq.<|)
 
       -- Increment amem.referenceCount.
-      modifyTVar' (amemReferenceCount amem) (+1)
+      modifyTVar' (amemRefCount amem) (+1)
 
       updateFromAbove env neg parent
 
@@ -662,10 +662,10 @@ instance DeleteNode Join where
 
     -- If amem.referenceCount is 1 (this join), delete amem
     -- else decrement amem.referenceCount.
-    rcount <- readTVar (amemReferenceCount amem)
+    rcount <- readTVar (amemRefCount amem)
     if rcount == 1
       then deleteAmem env amem
-      else writeTVar (amemReferenceCount amem) $! rcount - 1
+      else writeTVar (amemRefCount amem) $! rcount - 1
 
     -- If join is NOT leftUnlinked, remove it from its parent ...
     let parent = joinParent join
@@ -703,12 +703,12 @@ instance DeleteNode Neg where
 
     -- If amem.referenceCount is 1 (this neg), delete amem
     -- else decrement amem.referenceCount
-    rcount <- readTVar (amemReferenceCount amem)
+    rcount <- readTVar (amemRefCount amem)
     if rcount == 1
       then deleteAmem env amem
-      else writeTVar (amemReferenceCount amem) $! rcount - 1
+      else writeTVar (amemRefCount amem) $! rcount - 1
 
-    -- Unbind prod from its parent.
+    -- Unbind neg from its parent.
     let parent = negParent neg
         k      = AmemSuccessorKey amem (negTests neg)
     case parent of
@@ -759,8 +759,8 @@ deleteAmem
 -- REMOVING PRODUCTIONS
 
 class RemoveProd e where
-  -- | Removes a production represented by the production
-  -- node. Returns True unless the production was already removed.
+  -- | Removes a production represented by the node. Returns True
+  -- unless the production was already removed.
   removeProd :: e -> Prod -> STM Bool
 
 instance RemoveProd Env where

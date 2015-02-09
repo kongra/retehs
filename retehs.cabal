@@ -25,6 +25,7 @@ library
   exposed-modules:   AI.Rete.Data
                      AI.Rete.Flow
                      AI.Rete.Net
+                     AI.Rete.Print
 
   other-extensions:  Safe
   build-depends:     base >=4.7 && <4.8,
