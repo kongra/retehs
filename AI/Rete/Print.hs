@@ -1,5 +1,9 @@
-{-# LANGUAGE    Trustworthy #-}
-{-# OPTIONS_GHC -W -Wall    #-}
+{-# LANGUAGE    Trustworthy           #-}
+{-# LANGUAGE    TypeSynonymInstances  #-}
+{-# LANGUAGE    FlexibleInstances     #-}
+{-# LANGUAGE    MultiParamTypeClasses #-}
+{-# LANGUAGE    RankNTypes            #-}
+{-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Print
@@ -17,18 +21,20 @@ module AI.Rete.Print where
 
 import           AI.Rete.Data
 import           Control.Concurrent.STM
+import           Control.Monad (liftM)
+import           Data.Foldable (Foldable)
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable, hashWithSalt)
+import           Data.Tree.Print
+import           Kask.Control.Monad (toListM)
 import           Kask.Data.Function (compose)
 
--- import           Control.Monad (liftM)
--- import           Data.Foldable (Foldable)
+--
 -- import qualified Data.HashMap.Strict as Map
 -- import           Data.List (intersperse)
 -- import           Data.Maybe (catMaybes, fromJust)
 -- import           Data.Tree.Print
 -- import           Kask.Control.Monad (toListM, mapMM)
---
 
 -- CONFIGURATION
 
@@ -102,7 +108,7 @@ flagCode ProdToks             = 31
 {-# INLINE flagCode #-}
 
 instance Hashable Flag where
-  hashWithSalt salt f = salt `hashWithSalt` flagCode f
+  hashWithSalt salt flag = salt `hashWithSalt` flagCode flag
 
 -- | A set of 'Flags's.
 type Flags = Set.HashSet Flag
@@ -309,96 +315,111 @@ withEllipsisT v s = s >>= withEllipsis v
 -- whenNot False vns = vns
 -- {-# INLINE whenNot #-}
 
--- -- Vns (VISUALIZATION NODEs)
+-- Vns (VISUALIZATION NODEs)
 
--- type ShowVn = Flags -> Visited -> STM ShowS
--- type AdjsVn = Flags -> Visited -> STM [Vn]
+type VnShow = Flags -> Visited -> STM ShowS
+type VnAdjs = Flags -> Visited -> STM [Vn]
 
--- class ToVn a where
---   toShowVn :: a -> ShowVn
---   toAdjsVn :: a -> AdjsVn
+-- | Represents types whose values are convertible to Vn.
+class Vnable a where
+  toVnShow :: a -> VnShow
+  toVnAdjs :: a -> VnAdjs
 
--- data Vn = Vn { vnShowM   :: !ShowVn
---              , vnAdjs    :: !AdjsVn
---              , vnVisited :: !Visited }
+-- | Visualization node.
+data Vn = Vn { vnShowM   :: !VnShow
+             , vnAdjs    :: !VnAdjs
+             , vnVisited :: !Visited }
 
--- toVn :: ToVn a => Visited -> a -> Vn
--- toVn vs x = Vn { vnShowM   = toShowVn x
---                , vnAdjs    = toAdjsVn x
---                , vnVisited = vs }
--- {-# INLINE toVn #-}
+-- | Converts the passed object to a Vn.
+toVn :: Vnable a => Visited -> a -> Vn
+toVn vs x = Vn { vnShowM   = toVnShow x
+               , vnAdjs    = toVnAdjs x
+               , vnVisited = vs }
+{-# INLINE toVn #-}
 
--- instance ShowM STM Flags Vn where
---   showM fs Vn { vnShowM = f, vnVisited = vs } = f fs vs
+instance ShowM STM Flags Vn where
+  showM flags Vn { vnShowM = f, vnVisited = vs } = f flags vs
+  {-# INLINE showM #-}
 
--- -- LEAF/PROPERTY Vns CREATION
+-- SPECIFIC Vns
 
--- leafVn :: Visited -> ShowVn -> Vn
--- leafVn vs svn = Vn { vnShowM   = svn
---                    , vnAdjs    = \_ _ -> return []
---                    , vnVisited = vs}
--- {-# INLINE leafVn #-}
+-- | Creates a Vn that has no adjs - thus is a leaf.
+leafVn :: Visited -> VnShow -> Vn
+leafVn vs show' = Vn { vnShowM   = show'
+                     , vnAdjs    = \_ _ -> return []
+                     , vnVisited = vs }
+{-# INLINE leafVn #-}
 
--- propVn :: Visited -> ShowS -> [Vn] -> Vn
--- propVn vs name vns = Vn { vnShowM   = \_ _ -> return name
---                         , vnAdjs    = \_ _ -> return vns
---                         , vnVisited = vs}
--- {-# INLINE propVn #-}
+-- | Creates a label Vn with passed adjs.
+labelVn :: Visited -> ShowS -> [Vn] -> Vn
+labelVn vs label adjs' = Vn { vnShowM   = \_ _ -> return label
+                            , vnAdjs    = \_ _ -> return adjs'
+                            , vnVisited = vs }
+{-# INLINE labelVn #-}
 
--- leafPropVn :: Visited -> ShowS -> [ShowVn] -> Vn
--- leafPropVn vs name svns = propVn vs name (map (leafVn vs) svns)
--- {-# INLINE leafPropVn #-}
+-- | Creates a Vn that represents a label with a sequence of leaf
+-- subnodes (Vns).
+labeledLeavesVn :: Visited -> ShowS -> [VnShow] -> Vn
+labeledLeavesVn vs label shows' = labelVn vs label (map (leafVn vs) shows')
+{-# INLINE labeledLeavesVn #-}
 
--- idS :: ID -> ShowS
--- idS id' = compose [showString " ", showString $ show id']
--- {-# INLINE idS #-}
+-- | Generates a ShowS representation of an Id.
+idS :: Id -> ShowS
+idS id' = compose [showString " ", showString $ show id']
+{-# INLINE idS #-}
 
--- withIdS :: ShowS -> ID -> ShowS
--- withIdS s id' = compose [s, idS id']
--- {-# INLINE withIdS #-}
+-- | Composes the passed ShowS with a representation of the Id.
+withIdS :: ShowS -> Id -> ShowS
+withIdS s id' = compose [s, idS id']
+{-# INLINE withIdS #-}
 
--- withOptIdS :: Bool -> ShowS -> ID -> ShowS
--- withOptIdS False s _   = s
--- withOptIdS True  s id' = s `withIdS` id'
--- {-# INLINE withOptIdS #-}
+-- | Works like withIdS, but uses the Id representation optionally,
+-- depending on the passed flag.
+withOptIdS :: Bool -> ShowS -> Id -> ShowS
+withOptIdS False s _   = s
+withOptIdS True  s id' = s `withIdS` id'
+{-# INLINE withOptIdS #-}
 
--- toVnsM :: (Monad m, Foldable f, ToVn a) => Visited -> m (f a) -> m [Vn]
--- toVnsM vs = liftM (map (toVn vs)) . toListM
--- {-# INLINE toVnsM #-}
+-- | Converts the monadic foldable into a sequence of Vns. All in the
+-- m monad.
+toVnsM :: (Monad m, Foldable f, Vnable a) => Visited -> m (f a) -> m [Vn]
+toVnsM vs = liftM (map (toVn vs)) . toListM
+{-# INLINE toVnsM #-}
 
--- toShowVnsM :: (Monad m, Foldable f, ToVn a) => m (f a) -> m [ShowVn]
--- toShowVnsM = liftM (map toShowVn) . toListM
--- {-# INLINE toShowVnsM #-}
+-- | Works like toVnsM, but returns a list of VnShows instead of Vns.
+toVnShowsM :: (Monad m, Foldable f, Vnable a) => m (f a) -> m [VnShow]
+toVnShowsM = liftM (map toVnShow) . toListM
+{-# INLINE toVnShowsM #-}
 
--- type OptPropVn = (Monad m, Foldable f, ToVn a) =>
---                  Bool -> String -> Visited -> m (f a) -> m (Maybe Vn)
+type OptLabelVn = (Monad m, Foldable f, Vnable a)
+               => Bool -> String -> Visited -> m (f a) -> m (Maybe Vn)
 
--- optPropVn :: OptPropVn
--- optPropVn False _     _  _  = return Nothing
--- optPropVn True  label vs xs = do
---   vns <- toVnsM vs xs
---   if null vns
---      then return Nothing
---      else return (Just (propVn vs (showString label) vns))
+optLabelVn :: OptLabelVn -- TODO: przemyśleć nazwy
+optLabelVn False _     _  _  = return Nothing
+optLabelVn True  label vs xs = do
+  vns <- toVnsM vs xs
+  if null vns
+     then return Nothing
+     else return (Just (labelVn vs (showString label) vns))
 
--- optLeafPropVn :: OptPropVn
+-- optLeafPropVn :: OptLabelVn
 -- optLeafPropVn False _     _  _  = return Nothing
 -- optLeafPropVn True  label vs xs = do
---   shows' <- toShowVnsM xs
+--   shows' <- toVnShowsM xs
 --   if null shows'
 --      then return Nothing
---      else return (Just (leafPropVn vs (showString label) shows'))
+--      else return (Just (labeledLeavesVn vs (showString label) shows'))
 
 -- optVns :: Monad m => [Maybe Vn] -> m [Vn]
 -- optVns = return . catMaybes
 -- {-# INLINE optVns #-}
 
--- netPropVn :: Flags -> OptPropVn
--- netPropVn fs = if is NetEmph fs then optPropVn else optLeafPropVn
+-- netPropVn :: Flags -> OptLabelVn
+-- netPropVn flags = if is NetEmph flags then optLabelVn else optLeafPropVn
 -- {-# INLINE netPropVn #-}
 
--- datPropVn :: Flags -> OptPropVn
--- datPropVn fs = if is DataEmph fs then optPropVn else optLeafPropVn
+-- datPropVn :: Flags -> OptLabelVn
+-- datPropVn flags = if is DataEmph flags then optLabelVn else optLeafPropVn
 -- {-# INLINE datPropVn #-}
 
 -- -- CONFIGURATION
@@ -407,7 +428,7 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- conf :: VConf
 -- conf = Conf { impl     = stmImpl
---             , adjs     = \fs Vn { vnAdjs = f, vnVisited = vs } -> f fs vs
+--             , adjs     = \fs Vn { vnAdjs = f, vnVisited = vs } -> f flags vs
 --             , maxDepth = Nothing
 --             , opts     = noFlags }
 
@@ -435,16 +456,16 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- -- WMES VISUALIZATION
 
--- instance ToVn Wme where
---   toShowVn = showWme
---   toAdjsVn = adjsWme
+-- instance Vnable Wme where
+--   toVnShow = showWme
+--   toVnAdjs = adjsWme
 
 -- showWme :: Wme -> Flags -> Visited -> STM ShowS
--- showWme wme fs vs =
+-- showWme wme flags vs =
 --   withEllipsis (visited wme vs) $
---     if is WmeSymbolic fs
+--     if is WmeSymbolic flags
 --       then showWmeSymbolic                wme
---       else showWmeExplicit (is WmeIds fs) wme
+--       else showWmeExplicit (is WmeIds flags) wme
 -- {-# INLINE showWme #-}
 
 -- showWmeSymbolic :: Wme -> ShowS
@@ -471,12 +492,12 @@ withEllipsisT v s = s >>= withEllipsis v
 -- adjsWme
 --   wme@Wme { wmeAmems                = amems
 --           , wmeToks                 = toks
---           , wmeNegJoinResults       = jresults} fs vs =
+--           , wmeNegJoinResults       = jresults} flags vs =
 --     whenNot (visited wme vs) $ do
 --       let vs' = visiting wme vs
---       amemsVn <- netPropVn fs (is WmeAmems fs) "amems" vs' (readTVar amems)
---       toksVn  <- datPropVn fs (is WmeToks  fs) "toks"  vs' (readTVar toks)
---       njrsVn  <- datPropVn fs (is WmeNegJoinResults fs)
+--       amemsVn <- netPropVn flags (is WmeAmems flags) "amems" vs' (readTVar amems)
+--       toksVn  <- datPropVn flags (is WmeToks  flags) "toks"  vs' (readTVar toks)
+--       njrsVn  <- datPropVn flags (is WmeNegJoinResults flags)
 --                  "neg. ⊳⊲ results (owners)" vs'
 --                  -- When visualizing the negative join results we only
 --                  -- show the owner tokens, cause wme in every negative join
@@ -488,23 +509,23 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- -- TOKENS VISUALIZATION
 
--- instance ToVn Tok where
---   toAdjsVn = adjsTok
---   toShowVn = showTok
+-- instance Vnable Tok where
+--   toVnAdjs = adjsTok
+--   toVnShow = showTok
 
 -- showTok :: Tok -> Flags -> Visited -> STM ShowS
--- showTok tok@DummyTopTok {} fs vs =
+-- showTok tok@DummyTopTok {} flags vs =
 --   withEllipsis (visited tok vs) $
---     withOptIdS (is TokIds fs) (showString "{}") (-1)
+--     withOptIdS (is TokIds flags) (showString "{}") (-1)
 
--- showTok tok fs vs = do
---     let s = if is TokWmes fs
---               then (if is TokWmesSymbolic fs
+-- showTok tok flags vs = do
+--     let s = if is TokWmes flags
+--               then (if is TokWmesSymbolic flags
 --                       then showTokWmesSymbolic tok
---                       else showTokWmesExplicit (is WmeIds fs) tok)
+--                       else showTokWmesExplicit (is WmeIds flags) tok)
 --               else showString "{..}"
 --     withEllipsis (visited tok vs) $
---       withOptIdS (is TokIds fs) s (tokId tok)
+--       withOptIdS (is TokIds flags) s (tokId tok)
 -- {-# INLINE showTok #-}
 
 -- showTokWmesSymbolic :: Tok -> ShowS
@@ -524,12 +545,12 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- adjsTok :: Tok -> Flags -> Visited -> STM [Vn]
 -- adjsTok tok@DummyTopTok { tokNode  = node
---                         , tokChildren  = children } fs vs =
+--                         , tokChildren  = children } flags vs =
 --   whenNot (visited tok vs) $ do
 --     let vs' = visiting tok vs
---     nodeVn     <- netPropVn fs (is TokNodes fs) "node" vs'
+--     nodeVn     <- netPropVn flags (is TokNodes flags) "node" vs'
 --                   (return [node])
---     childrenVn <- datPropVn fs (is TokChildren fs) "children" vs'
+--     childrenVn <- datPropVn flags (is TokChildren flags) "children" vs'
 --                   (readTVar children)
 --     optVns [nodeVn, childrenVn]
 
@@ -539,22 +560,22 @@ withEllipsisT v s = s >>= withEllipsis v
 --           , tokNode           = node
 --           , tokChildren       = children
 --           , tokNegJoinResults = jresults
---           , tokNccResults     = nresults } fs vs =
+--           , tokNccResults     = nresults } flags vs =
 --     whenNot (visited tok vs) $ do
 --       let vs' = visiting tok vs
---       nodeVn     <- netPropVn fs (is TokNodes   fs) "node"   vs' (return [node])
---       parentVn   <- datPropVn fs (is TokParents fs) "parent" vs' (return [parent])
---       ownerVn    <- datPropVn fs (is TokOwners  fs) "owner"  vs'
+--       nodeVn     <- netPropVn flags (is TokNodes   flags) "node"   vs' (return [node])
+--       parentVn   <- datPropVn flags (is TokParents flags) "parent" vs' (return [parent])
+--       ownerVn    <- datPropVn flags (is TokOwners  flags) "owner"  vs'
 --                     (liftM owner (readTVar mowner))
---       childrenVn <- datPropVn fs (is TokChildren fs) "children" vs'
+--       childrenVn <- datPropVn flags (is TokChildren flags) "children" vs'
 --                       (readTVar children)
---       jresultsVn <- datPropVn fs (is TokJoinResults fs) "neg. ⊳⊲ results (wmes)"
+--       jresultsVn <- datPropVn flags (is TokJoinResults flags) "neg. ⊳⊲ results (wmes)"
 --                       vs'
 --                       -- When visualizing the negative join results we only
 --                       -- show the wmes, cause owner in every negative join
 --                       -- result is this tok(en).
 --                       (mapMM (return . negativeJoinResultWme) (toListT jresults))
---       nresultsVn <- datPropVn fs (is TokNccResults fs) "ncc results" vs'
+--       nresultsVn <- datPropVn flags (is TokNccResults flags) "ncc results" vs'
 --                       (readTVar nresults)
 --       optVns [nodeVn, parentVn, ownerVn, childrenVn, jresultsVn, nresultsVn]
 --     where
@@ -565,18 +586,18 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- -- AMEMS VISUALIZATION
 
--- instance ToVn Amem where
---   toAdjsVn = adjsAmem
---   toShowVn = showAmem
+-- instance Vnable Amem where
+--   toVnAdjs = adjsAmem
+--   toVnShow = showAmem
 
 -- showAmem :: Amem -> Flags -> Visited -> STM ShowS
 -- showAmem
 --   amem@Amem { amemObj            = obj
 --             , amemAttr           = attr
 --             , amemVal            = val
---             , amemReferenceCount = rcount } fs vs = do
+--             , amemReferenceCount = rcount } flags vs = do
 --     let alpha = showString "α"
---     let repr  = if is AmemFields fs
+--     let repr  = if is AmemFields flags
 --                   then compose [alpha, showString " ("
 --                                 , sS obj,  showString ","
 --                                 , sS attr, showString ","
@@ -584,7 +605,7 @@ withEllipsisT v s = s >>= withEllipsis v
 --                                 , showString ")"]
 --                   else alpha
 --     withEllipsisT (visited amem vs) $
---       if is AmemRefCounts fs
+--       if is AmemRefCounts flags
 --         then (do rc <- readTVar rcount
 --                  return $ compose [repr, showString " refcount ", shows rc])
 --         else return repr
@@ -596,76 +617,76 @@ withEllipsisT v s = s >>= withEllipsis v
 -- adjsAmem :: Amem -> Flags -> Visited -> STM [Vn]
 -- adjsAmem
 --   amem@Amem { amemSuccessors  = succs
---             , amemWmes        = wmes } fs vs =
+--             , amemWmes        = wmes } flags vs =
 --     whenNot (visited amem vs) $ do
 --       let vs' = visiting amem vs
---       succVn <- netPropVn fs (is AmemSuccessors fs) "successors" vs'
+--       succVn <- netPropVn flags (is AmemSuccessors flags) "successors" vs'
 --                 (readTVar succs)
---       wmesVn <- datPropVn fs (is AmemWmes fs) "wmes" vs' (readTVar wmes)
+--       wmesVn <- datPropVn flags (is AmemWmes flags) "wmes" vs' (readTVar wmes)
 --       optVns [succVn, wmesVn]
 -- {-# INLINE adjsAmem #-}
 
 -- -- NODE VISUALIZATION
 
--- instance ToVn Node where
---   toAdjsVn = adjsNode
---   toShowVn = showNode
+-- instance Vnable Node where
+--   toVnAdjs = adjsNode
+--   toVnShow = showNode
 
 -- showNode :: Node -> Flags -> Visited -> STM ShowS
 -- showNode node@DummyTopNode {} _ vs =
 --   withEllipsis (visited node vs) $ showString "DTN (β)"
 
--- showNode node fs vs = do
+-- showNode node flags vs = do
 --   let variant = nodeVariant node
 --   s <- case variant of
---     Bmem       {} -> showBmem       variant fs
---     JoinNode   {} -> showJoinNode   variant fs
---     NegNode    {} -> showNegNode    variant fs
---     NccNode    {} -> showNccNode    variant fs
---     NccPartner {} -> showNccPartner variant fs
---     PNode      {} -> showPNode      variant fs
+--     Bmem       {} -> showBmem       variant flags
+--     JoinNode   {} -> showJoinNode   variant flags
+--     NegNode    {} -> showNegNode    variant flags
+--     NccNode    {} -> showNccNode    variant flags
+--     NccPartner {} -> showNccPartner variant flags
+--     PNode      {} -> showPNode      variant flags
 --     DTN        {} -> unreachableCode "showNode"
 
 --   withEllipsis (visited node vs) $
---     withOptIdS (is NodeIds fs) s (nodeId node)
+--     withOptIdS (is NodeIds flags) s (nodeId node)
 -- {-# INLINE showNode #-}
 
 -- adjsNode :: Node -> Flags -> Visited -> STM [Vn]
--- adjsNode node@DummyTopNode { nodeVariant = variant } fs vs =
+-- adjsNode node@DummyTopNode { nodeVariant = variant } flags vs =
 --   whenNot (visited node vs) $ do
 --     let vs' = visiting node vs
 --     -- In the case of DTM, just like in any β memory, we traverse down
 --     -- using all children, also the unlinked ones.
---     childrenVn <- netPropVn fs (is NodeChildren fs) "children (with all)" vs'
+--     childrenVn <- netPropVn flags (is NodeChildren flags) "children (with all)" vs'
 --                   (bmemLikeChildren node)
 --                   -- (rvprop bmemAllChildren node)
---     variantVns <- adjsDTN variant fs vs'
+--     variantVns <- adjsDTN variant flags vs'
 --     optVns (variantVns ++ [childrenVn])
 
 -- adjsNode
 --   node@Node { nodeParent    = parent
 --             , nodeChildren  = children
---             , nodeVariant   = variant } fs vs =
+--             , nodeVariant   = variant } flags vs =
 --     whenNot (visited node vs) $ do
 --       let vs' = visiting node vs
---       parentVn <- netPropVn fs (is NodeParents  fs) "parent" vs'
+--       parentVn <- netPropVn flags (is NodeParents  flags) "parent" vs'
 --                   (return [parent])
 
 --       -- In the case of β memory, we traverse down using all children,
 --       -- also the unlinked ones.
 --       childrenVn <- if isBmemLike variant
---                       then netPropVn fs (is NodeChildren fs)
+--                       then netPropVn flags (is NodeChildren flags)
 --                            "children (with all)" vs' (bmemLikeChildren node)
---                       else netPropVn fs (is NodeChildren fs) "children"
+--                       else netPropVn flags (is NodeChildren flags) "children"
 --                            vs' (readTVar children)
 
 --       variantVns <- case variant of
---         Bmem       {} -> adjsBmem       variant fs vs'
---         JoinNode   {} -> adjsJoinNode   variant fs vs'
---         NegNode    {} -> adjsNegNode    variant fs vs'
---         NccNode    {} -> adjsNccNode    variant fs vs'
---         NccPartner {} -> adjsNccPartner variant fs vs'
---         PNode      {} -> adjsPNode      variant fs vs'
+--         Bmem       {} -> adjsBmem       variant flags vs'
+--         JoinNode   {} -> adjsJoinNode   variant flags vs'
+--         NegNode    {} -> adjsNegNode    variant flags vs'
+--         NccNode    {} -> adjsNccNode    variant flags vs'
+--         NccPartner {} -> adjsNccPartner variant flags vs'
+--         PNode      {} -> adjsPNode      variant flags vs'
 --         DTN        {} -> unreachableCode "adjsNode"
 
 --       optVns (variantVns ++ [parentVn, childrenVn])
@@ -678,7 +699,7 @@ withEllipsisT v s = s >>= withEllipsis v
 -- {-# INLINE showBmem #-}
 
 -- adjsBmem :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsBmem Bmem { nodeToks = toks } fs vs' = adjsBmemLike toks fs vs'
+-- adjsBmem Bmem { nodeToks = toks } flags vs' = adjsBmemLike toks flags vs'
 -- adjsBmem _                        _  _   = unreachableCode "adjsBmem"
 -- {-# INLINE adjsBmem #-}
 
@@ -689,8 +710,8 @@ withEllipsisT v s = s >>= withEllipsis v
 -- {-# INLINE isBmemLike #-}
 
 -- adjsBmemLike :: TSet Tok -> Flags -> Visited -> STM [Maybe Vn]
--- adjsBmemLike toks fs vs' = do
---     toksVn <- datPropVn fs (is BmemToks fs) "toks" vs' (readTVar toks)
+-- adjsBmemLike toks flags vs' = do
+--     toksVn <- datPropVn flags (is BmemToks flags) "toks" vs' (readTVar toks)
 --     return [toksVn]
 -- {-# INLINE adjsBmemLike #-}
 
@@ -706,15 +727,15 @@ withEllipsisT v s = s >>= withEllipsis v
 -- -- DTN VISUALIZATION
 
 -- adjsDTN :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsDTN DTN { nodeToks = toks } fs vs' = adjsBmemLike toks fs vs'
+-- adjsDTN DTN { nodeToks = toks } flags vs' = adjsBmemLike toks flags vs'
 -- adjsDTN _                       _  _   = unreachableCode "adjsDTN"
 -- {-# INLINE adjsDTN #-}
 
 -- -- JoinNode VISUALIZATION
 
 -- showJoinNode :: NodeVariant -> Flags -> STM ShowS
--- showJoinNode JoinNode { leftUnlinked = lu, rightUnlinked = ru } fs =
---     if is Uls fs
+-- showJoinNode JoinNode { leftUnlinked = lu, rightUnlinked = ru } flags =
+--     if is Uls flags
 --       then (do mark <- ulMark lu ru
 --                return (showString ('⊳':'⊲':' ':mark)))
 --       else return (showString "⊳⊲")
@@ -744,10 +765,10 @@ withEllipsisT v s = s >>= withEllipsis v
 -- adjsJoinNode
 --   JoinNode { joinTests                   = tests
 --            , nodeAmem                    = amem
---            , nearestAncestorWithSameAmem = ancestor } fs vs' = do
---     testsVn    <- netPropVn fs (is JoinTests fs) "tests" vs' (return tests)
---     amemVn     <- netPropVn fs (is JoinAmems fs) "amem"  vs' (return [amem])
---     ancestorVn <- netPropVn fs (is JoinNearestAncestors fs) "ancestor" vs'
+--            , nearestAncestorWithSameAmem = ancestor } flags vs' = do
+--     testsVn    <- netPropVn flags (is JoinTests flags) "tests" vs' (return tests)
+--     amemVn     <- netPropVn flags (is JoinAmems flags) "amem"  vs' (return [amem])
+--     ancestorVn <- netPropVn flags (is JoinNearestAncestors flags) "ancestor" vs'
 --                   (joinAncestorM ancestor)
 --     return [amemVn, ancestorVn, testsVn]
 
@@ -763,8 +784,8 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- showNegNode :: NodeVariant -> Flags -> STM ShowS
 -- showNegNode
---   NegNode { rightUnlinked = ru } fs =
---     if is Uls fs
+--   NegNode { rightUnlinked = ru } flags =
+--     if is Uls flags
 --       then (do mark <- ulSingleMark ru
 --                return (showString ('¬':' ':mark)))
 --       else return (showString "¬")
@@ -777,12 +798,12 @@ withEllipsisT v s = s >>= withEllipsis v
 --   NegNode { joinTests                   = tests
 --           , nodeAmem                    = amem
 --           , nearestAncestorWithSameAmem = ancestor
---           , nodeToks                  = toks} fs vs' = do
---     amemVn     <- netPropVn fs (is NegAmems fs) "amem"  vs' (return [amem])
---     testsVn    <- netPropVn fs (is NegTests fs) "tests" vs' (return tests)
---     ancestorVn <- netPropVn fs (is NegNearestAncestors fs) "ancestor" vs'
+--           , nodeToks                  = toks} flags vs' = do
+--     amemVn     <- netPropVn flags (is NegAmems flags) "amem"  vs' (return [amem])
+--     testsVn    <- netPropVn flags (is NegTests flags) "tests" vs' (return tests)
+--     ancestorVn <- netPropVn flags (is NegNearestAncestors flags) "ancestor" vs'
 --                     (joinAncestorM ancestor)
---     toksVn     <- datPropVn fs (is NegToks  fs) "toks" vs' (readTVar toks)
+--     toksVn     <- datPropVn flags (is NegToks  flags) "toks" vs' (readTVar toks)
 --     return [amemVn, ancestorVn, testsVn, toksVn]
 
 -- adjsNegNode _ _ _ = unreachableCode "adjsNegNode"
@@ -795,10 +816,10 @@ withEllipsisT v s = s >>= withEllipsis v
 -- {-# INLINE showNccNode #-}
 
 -- adjsNccNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsNccNode NccNode { nodeToks = toks, nccPartner = partner } fs vs' = do
---     partnerVn <- netPropVn fs (is NccPartners fs) "partner" vs'
+-- adjsNccNode NccNode { nodeToks = toks, nccPartner = partner } flags vs' = do
+--     partnerVn <- netPropVn flags (is NccPartners flags) "partner" vs'
 --                  (return [partner])
---     toksVn    <- datPropVn fs (is NccToks fs) "toks" vs'
+--     toksVn    <- datPropVn flags (is NccToks flags) "toks" vs'
 --                  (readTVar toks)
 --     return [partnerVn, toksVn]
 
@@ -808,8 +829,8 @@ withEllipsisT v s = s >>= withEllipsis v
 -- -- NccPartner VISUALIZATION
 
 -- showNccPartner :: NodeVariant -> Flags -> STM ShowS
--- showNccPartner NccPartner { nccPartnerNumberOfConjucts = conjs  } fs =
---     if is NccNumberOfConjucts fs
+-- showNccPartner NccPartner { nccPartnerNumberOfConjucts = conjs  } flags =
+--     if is NccNumberOfConjucts flags
 --       then return (compose [showString "Ncc (P) conjucts ", shows conjs])
 --       else return (showString "Ncc (P)")
 
@@ -819,11 +840,11 @@ withEllipsisT v s = s >>= withEllipsis v
 -- adjsNccPartner :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
 -- adjsNccPartner
 --   NccPartner { nccPartnerNccNode       = node
---              , nccPartnerNewResultBuff = buff } fs vs' = do
+--              , nccPartnerNewResultBuff = buff } flags vs' = do
 --     node'  <- readTVar node
---     nodeVn <- netPropVn fs (is NccNodes fs)
+--     nodeVn <- netPropVn flags (is NccNodes flags)
 --                 "ncc node" vs' (return [fromJust node'])
---     toksVn <- datPropVn fs (is NccNewResultBuffs fs)
+--     toksVn <- datPropVn flags (is NccNewResultBuffs flags)
 --                 "new result buff." vs' (readTVar buff)
 --     return [nodeVn, toksVn]
 
@@ -840,9 +861,9 @@ withEllipsisT v s = s >>= withEllipsis v
 -- adjsPNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
 -- adjsPNode
 --   PNode { nodeToks              = toks
---         , pnodeVariableBindings = bindings } fs vs' = do
---     toksVn <- datPropVn fs (is PNodeToks     fs) "toks" vs' (readTVar toks)
---     varsVn <- netPropVn fs (is PNodeBindings fs) "vars" vs' (varlocs bindings)
+--         , pnodeVariableBindings = bindings } flags vs' = do
+--     toksVn <- datPropVn flags (is PNodeToks     flags) "toks" vs' (readTVar toks)
+--     varsVn <- netPropVn flags (is PNodeBindings flags) "vars" vs' (varlocs bindings)
 --     return [varsVn, toksVn]
 
 -- adjsPNode _ _ _ = unreachableCode "adjsPNode"
@@ -857,9 +878,9 @@ withEllipsisT v s = s >>= withEllipsis v
 --   where vbinding2VLoc (s, SymbolLocation f d) = VLoc s f d
 -- {-# INLINE varlocs #-}
 
--- instance ToVn VLoc where
---   toAdjsVn = adjsVLoc
---   toShowVn = showVLoc
+-- instance Vnable VLoc where
+--   toVnAdjs = adjsVLoc
+--   toVnShow = showVLoc
 
 -- showVLoc :: VLoc -> Flags -> Visited -> STM ShowS
 -- showVLoc (VLoc s f d) _ _ =
@@ -873,9 +894,9 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- -- JoinTest VISUALIZATION
 
--- instance ToVn JoinTest where
---   toAdjsVn = adjsJoinTest
---   toShowVn = showJoinTest
+-- instance Vnable JoinTest where
+--   toVnAdjs = adjsJoinTest
+--   toVnShow = showJoinTest
 
 -- showJoinTest :: JoinTest -> Flags -> Visited -> STM ShowS
 -- showJoinTest
@@ -904,13 +925,13 @@ withEllipsisT v s = s >>= withEllipsis v
 
 -- -- | Converts the selected object to a tree representation (expressed
 -- -- in ShowS).
--- toShowS :: ToVn a => Depth -> Switch -> a -> STM ShowS
+-- toShowS :: Vnable a => Depth -> Switch -> a -> STM ShowS
 -- toShowS d switch obj = printTree (switches conf) (toVn cleanVisited obj)
 --   where switches = d . applySwitch switch
 -- {-# INLINE toShowS #-}
 
 -- -- | Works like toShowS, but returns String instead of ShowS
--- toString :: ToVn a => Depth -> Switch -> a -> STM String
+-- toString :: Vnable a => Depth -> Switch -> a -> STM String
 -- toString d switch = liftM evalShowS . toShowS d switch
 --   where evalShowS s = s ""
 -- {-# INLINE toString #-}
