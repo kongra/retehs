@@ -20,17 +20,20 @@
 module AI.Rete.Print where
 
 import           AI.Rete.Data
+import           AI.Rete.Flow
 import           Control.Concurrent.STM
 import           Control.Monad (liftM)
 import           Data.Foldable (Foldable)
+import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable, hashWithSalt)
+import           Data.Maybe (catMaybes)
 import           Data.Tree.Print
-import           Kask.Control.Monad (toListM)
+import           Kask.Control.Monad (toListM, mapMM)
 import           Kask.Data.Function (compose)
 
 --
--- import qualified Data.HashMap.Strict as Map
+--
 -- import           Data.List (intersperse)
 -- import           Data.Maybe (catMaybes, fromJust)
 -- import           Data.Tree.Print
@@ -310,10 +313,10 @@ withEllipsisT :: Bool -> STM ShowS -> STM ShowS
 withEllipsisT v s = s >>= withEllipsis v
 {-# INLINE withEllipsisT #-}
 
--- whenNot :: Bool -> STM [Vn] -> STM [Vn]
--- whenNot True  _   = return []
--- whenNot False vns = vns
--- {-# INLINE whenNot #-}
+whenNot :: Bool -> STM [Vn] -> STM [Vn]
+whenNot True  _   = return []
+whenNot False vns = vns
+{-# INLINE whenNot #-}
 
 -- Vns (VISUALIZATION NODEs)
 
@@ -394,124 +397,159 @@ toVnShowsM = liftM (map toVnShow) . toListM
 type OptLabelVn = (Monad m, Foldable f, Vnable a)
                => Bool -> String -> Visited -> m (f a) -> m (Maybe Vn)
 
-optLabelVn :: OptLabelVn -- TODO: przemyśleć nazwy
-optLabelVn False _     _  _  = return Nothing
-optLabelVn True  label vs xs = do
-  vns <- toVnsM vs xs
+-- | Returns an optional Vn that represents a label with a
+-- sub-sequence of adjs (Vns).
+optLabeledVn :: OptLabelVn
+optLabeledVn False _     _  _  = return Nothing
+optLabeledVn True  label vs adjs' = do
+  vns <- toVnsM vs adjs'
   if null vns
      then return Nothing
      else return (Just (labelVn vs (showString label) vns))
+{-# INLINE optLabeledVn #-}
 
--- optLeafPropVn :: OptLabelVn
--- optLeafPropVn False _     _  _  = return Nothing
--- optLeafPropVn True  label vs xs = do
---   shows' <- toVnShowsM xs
---   if null shows'
---      then return Nothing
---      else return (Just (labeledLeavesVn vs (showString label) shows'))
+-- | Returns an optional Vn that represents a label with a
+-- sub-sequence of leaf adjs (Vns).
+optLabeledLeavesVn :: OptLabelVn
+optLabeledLeavesVn False _     _  _  = return Nothing
+optLabeledLeavesVn True  label vs xs = do
+  shows' <- toVnShowsM xs
+  if null shows'
+     then return Nothing
+     else return (Just (labeledLeavesVn vs (showString label) shows'))
+{-# INLINE optLabeledLeavesVn #-}
 
--- optVns :: Monad m => [Maybe Vn] -> m [Vn]
--- optVns = return . catMaybes
--- {-# INLINE optVns #-}
+-- | Strips off Nothings out of the input collection of Maybe Vns.
+optVns :: Monad m => [Maybe Vn] -> m [Vn]
+optVns = return . catMaybes
+{-# INLINE optVns #-}
 
--- netPropVn :: Flags -> OptLabelVn
--- netPropVn flags = if is NetEmph flags then optLabelVn else optLeafPropVn
--- {-# INLINE netPropVn #-}
+-- | Creates a node with an emphasis on the network structure.
+netVn :: Flags -> OptLabelVn
+netVn flags = if is NetEmph flags then optLabeledVn else optLabeledLeavesVn
+{-# INLINE netVn #-}
 
--- datPropVn :: Flags -> OptLabelVn
--- datPropVn flags = if is DataEmph flags then optLabelVn else optLeafPropVn
--- {-# INLINE datPropVn #-}
+-- | Creates a node with an emphasis on the data.
+datVn :: Flags -> OptLabelVn
+datVn flags = if is DataEmph flags then optLabeledVn else optLabeledLeavesVn
+{-# INLINE datVn #-}
 
--- -- CONFIGURATION
+-- CONFIGURATION
 
--- type VConf = Conf STM ShowS Flags Vn
+type VConf = Conf STM ShowS Flags Vn
 
--- conf :: VConf
--- conf = Conf { impl     = stmImpl
---             , adjs     = \fs Vn { vnAdjs = f, vnVisited = vs } -> f flags vs
---             , maxDepth = Nothing
---             , opts     = noFlags }
+conf :: VConf
+conf = Conf { impl     = stmImpl
+            , adjs     = \flags Vn { vnAdjs = f, vnVisited = vs } -> f flags vs
+            , maxDepth = Nothing
+            , opts     = noFlags }
 
--- -- | A specifier of depth of the treePrint process.
--- type Depth = VConf -> VConf
+-- | A specifier of depth of the treePrint process.
+type Depth = VConf -> VConf
 
--- -- | Sets the maxDepth of a configuration to the specified value.
--- depth :: Int -> Depth
--- depth d c = c { maxDepth = Just d }
--- {-# INLINE depth #-}
+-- | Sets the maxDepth of a configuration to the specified value.
+depth :: Int -> Depth
+depth d c = c { maxDepth = Just d }
+{-# INLINE depth #-}
 
--- -- | Unlimits the maxDepth of a configuration.
--- boundless :: Depth
--- boundless c = c { maxDepth = Nothing }
--- {-# INLINE boundless #-}
+-- | Unlimits the maxDepth of a configuration.
+boundless :: Depth
+boundless c = c { maxDepth = Nothing }
+{-# INLINE boundless #-}
 
--- applySwitch :: Switch -> VConf -> VConf
--- applySwitch switch c@Conf { opts = opts' } = c { opts = switch opts' }
--- {-# INLINE applySwitch #-}
+applySwitch :: Switch -> VConf -> VConf
+applySwitch switch c@Conf { opts = opts' } = c { opts = switch opts' }
+{-# INLINE applySwitch #-}
 
--- -- STM IMPL
+-- STM IMPL
 
--- stmImpl :: Impl STM ShowS
--- stmImpl = str
+stmImpl :: Impl STM ShowS
+stmImpl = str
 
 -- -- WMES VISUALIZATION
 
--- instance Vnable Wme where
---   toVnShow = showWme
---   toVnAdjs = adjsWme
+instance Vnable Wme where
+  toVnShow = showWme
+  toVnAdjs = wmeAdjs
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
--- showWme :: Wme -> Flags -> Visited -> STM ShowS
--- showWme wme flags vs =
---   withEllipsis (visited wme vs) $
---     if is WmeSymbolic flags
---       then showWmeSymbolic                wme
---       else showWmeExplicit (is WmeIds flags) wme
--- {-# INLINE showWme #-}
+showWme :: Wme -> Flags -> Visited -> STM ShowS
+showWme wme flags vs =
+  withEllipsis (visited wme vs) $
+    if is WmeSymbolic flags
+      then showWmeSymbolic                wme
+      else showWmeExplicit (is WmeIds flags) wme
+{-# INLINE showWme #-}
 
--- showWmeSymbolic :: Wme -> ShowS
--- showWmeSymbolic wme = compose [showString "w", shows $ wmeId wme]
--- {-# INLINE showWmeSymbolic #-}
+showWmeSymbolic :: Wme -> ShowS
+showWmeSymbolic wme = compose [showString "w", shows $ wmeId wme]
+{-# INLINE showWmeSymbolic #-}
 
--- showWmeExplicit :: Bool -> Wme -> ShowS
--- showWmeExplicit oid
---   Wme { wmeId = id', wmeObj = obj, wmeAttr = attr, wmeVal = val } =
---     withOptIdS oid
---       (compose [ showString "("
---                , shows obj,  showString ","
---                , shows attr, showString ",", shows val
---                , showString ")"])
---       id'
--- {-# INLINE showWmeExplicit #-}
+showWmeExplicit :: Bool -> Wme -> ShowS
+showWmeExplicit oid
+  Wme { wmeId = id', wmeObj = obj, wmeAttr = attr, wmeVal = val } =
+    withOptIdS oid
+      (compose [ showString "("
+               , shows obj,  showString ","
+               , shows attr, showString ",", shows val
+               , showString ")"])
+      id'
+{-# INLINE showWmeExplicit #-}
 
--- showWmeMaybe :: (Wme -> ShowS) -> Maybe Wme -> ShowS
--- showWmeMaybe _ Nothing    = showString "_"
--- showWmeMaybe f (Just wme) = f wme
--- {-# INLINE showWmeMaybe #-}
+showWmeMaybe :: (Wme -> ShowS) -> Maybe Wme -> ShowS
+showWmeMaybe _ Nothing    = showString "_"
+showWmeMaybe f (Just wme) = f wme
+{-# INLINE showWmeMaybe #-}
 
--- adjsWme :: Wme -> Flags -> Visited -> STM [Vn]
--- adjsWme
---   wme@Wme { wmeAmems                = amems
---           , wmeToks                 = toks
---           , wmeNegJoinResults       = jresults} flags vs =
---     whenNot (visited wme vs) $ do
---       let vs' = visiting wme vs
---       amemsVn <- netPropVn flags (is WmeAmems flags) "amems" vs' (readTVar amems)
---       toksVn  <- datPropVn flags (is WmeToks  flags) "toks"  vs' (readTVar toks)
---       njrsVn  <- datPropVn flags (is WmeNegJoinResults flags)
---                  "neg. ⊳⊲ results (owners)" vs'
---                  -- When visualizing the negative join results we only
---                  -- show the owner tokens, cause wme in every negative join
---                  -- result is this wme.
---                  (mapMM (return . negativeJoinResultOwner) (toListT jresults))
+wmeAdjs :: Wme -> Flags -> Visited -> STM [Vn]
+wmeAdjs
+  wme@Wme { wmeAmems                = amems
+          , wmeToks                 = toks
+          , wmeNegJoinResults       = jresults} flags vs =
+    whenNot (visited wme vs) $ do
+      let vs' = visiting wme vs
+      amemsVn <- netVn flags (is WmeAmems flags) "amems" vs' (readTVar amems)
+      toksVn  <- datVn flags (is WmeToks  flags) "toks"  vs' (readTVar toks)
+      njrsVn  <- datVn flags (is WmeNegJoinResults flags) "njrs (owners)" vs'
+                 -- When visualizing the negative join results we only
+                 -- show the owner tokens, cause wme in every negative join
+                 -- result is this wme.
+                 (mapMM (return . njrOwner) (toListT jresults))
 
---       optVns [amemsVn, toksVn, njrsVn]
--- {-# INLINE adjsWme #-}
+      optVns [amemsVn, toksVn, njrsVn]
+{-# INLINE wmeAdjs #-}
 
--- -- TOKENS VISUALIZATION
+-- TOKENS VISUALIZATION
 
--- instance Vnable Tok where
---   toVnAdjs = adjsTok
---   toVnShow = showTok
+instance Vnable WmeTok where
+  toVnAdjs (BmemWmeTok btok ) = toVnAdjs btok
+  toVnAdjs (NegWmeTok  ntok ) = toVnAdjs ntok
+  toVnAdjs (ProdWmeTok ptok ) = toVnAdjs ptok
+
+  toVnShow (BmemWmeTok btok ) = toVnShow btok
+  toVnShow (NegWmeTok  ntok ) = toVnShow ntok
+  toVnShow (ProdWmeTok ptok ) = toVnShow ptok
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+instance Vnable Btok where
+  toVnAdjs = undefined -- adjsTok
+  toVnShow = undefined -- showTok
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+instance Vnable Ntok where
+  toVnAdjs = undefined -- adjsTok
+  toVnShow = undefined -- showTok
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+instance Vnable Ptok where
+  toVnAdjs = undefined -- adjsTok
+  toVnShow = undefined -- showTok
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
 -- showTok :: Tok -> Flags -> Visited -> STM ShowS
 -- showTok tok@DummyTopTok {} flags vs =
@@ -586,9 +624,11 @@ optLabelVn True  label vs xs = do
 
 -- -- AMEMS VISUALIZATION
 
--- instance Vnable Amem where
---   toVnAdjs = adjsAmem
---   toVnShow = showAmem
+instance Vnable Amem where
+  toVnAdjs = undefined -- adjsAmem
+  toVnShow = undefined -- showAmem
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
 -- showAmem :: Amem -> Flags -> Visited -> STM ShowS
 -- showAmem
@@ -808,51 +848,6 @@ optLabelVn True  label vs xs = do
 
 -- adjsNegNode _ _ _ = unreachableCode "adjsNegNode"
 
--- -- NccNode VISUALIZATION
-
--- showNccNode :: NodeVariant -> Flags -> STM ShowS
--- showNccNode NccNode {} _ = return (showString "Ncc")
--- showNccNode _          _ = unreachableCode "showNccNode"
--- {-# INLINE showNccNode #-}
-
--- adjsNccNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsNccNode NccNode { nodeToks = toks, nccPartner = partner } flags vs' = do
---     partnerVn <- netPropVn flags (is NccPartners flags) "partner" vs'
---                  (return [partner])
---     toksVn    <- datPropVn flags (is NccToks flags) "toks" vs'
---                  (readTVar toks)
---     return [partnerVn, toksVn]
-
--- adjsNccNode _ _ _ = unreachableCode "adjsNccNode"
--- {-# INLINE adjsNccNode #-}
-
--- -- NccPartner VISUALIZATION
-
--- showNccPartner :: NodeVariant -> Flags -> STM ShowS
--- showNccPartner NccPartner { nccPartnerNumberOfConjucts = conjs  } flags =
---     if is NccNumberOfConjucts flags
---       then return (compose [showString "Ncc (P) conjucts ", shows conjs])
---       else return (showString "Ncc (P)")
-
--- showNccPartner _ _ = unreachableCode "showNccPartner"
--- {-# INLINE showNccPartner #-}
-
--- adjsNccPartner :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsNccPartner
---   NccPartner { nccPartnerNccNode       = node
---              , nccPartnerNewResultBuff = buff } flags vs' = do
---     node'  <- readTVar node
---     nodeVn <- netPropVn flags (is NccNodes flags)
---                 "ncc node" vs' (return [fromJust node'])
---     toksVn <- datPropVn flags (is NccNewResultBuffs flags)
---                 "new result buff." vs' (readTVar buff)
---     return [nodeVn, toksVn]
-
--- adjsNccPartner _ _ _ = unreachableCode "adjsNccPartner"
--- {-# INLINE adjsNccPartner #-}
-
--- -- PNode VISUALIZATION
-
 -- showPNode :: NodeVariant -> Flags -> STM ShowS
 -- showPNode PNode {} _ = return (showString "P")
 -- showPNode _        _ = unreachableCode "showPNode"
@@ -869,81 +864,78 @@ optLabelVn True  label vs xs = do
 -- adjsPNode _ _ _ = unreachableCode "adjsPNode"
 -- {-# INLINE adjsPNode #-}
 
--- -- VARIABLE LOCATIONS CREATION AND VISUALIZATION
+-- VARIABLE LOCATIONS VISUALIZATION
 
--- data VLoc = VLoc !Symbol !Field !Distance
+data VLoc = VLoc !Variable !Int !Field
 
--- varlocs :: VariableBindings -> STM [VLoc]
--- varlocs = return . map vbinding2VLoc . Map.toList
---   where vbinding2VLoc (s, SymbolLocation f d) = VLoc s f d
--- {-# INLINE varlocs #-}
+varlocs :: Bindings -> STM [VLoc]
+varlocs = return . map vbinding2VLoc . Map.toList
+  where vbinding2VLoc (s, Location d f) = VLoc s d f
+{-# INLINE varlocs #-}
 
--- instance Vnable VLoc where
---   toVnAdjs = adjsVLoc
---   toVnShow = showVLoc
+instance Vnable VLoc where
+  toVnAdjs = adjsVLoc
+  toVnShow = showVLoc
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
--- showVLoc :: VLoc -> Flags -> Visited -> STM ShowS
--- showVLoc (VLoc s f d) _ _ =
---   return (compose [ shows s, showString " → "
---                   , shows d, showString ",", shows f])
--- {-# INLINE showVLoc #-}
+showVLoc :: VLoc -> Flags -> Visited -> STM ShowS
+showVLoc (VLoc s f d) _ _ =
+  return (compose [ shows s, showString " → "
+                  , shows d, showString ",", shows f])
+{-# INLINE showVLoc #-}
 
--- adjsVLoc :: VLoc -> Flags -> Visited -> STM [Vn]
--- adjsVLoc _ _ _ = return []
--- {-# INLINE adjsVLoc #-}
+adjsVLoc :: VLoc -> Flags -> Visited -> STM [Vn]
+adjsVLoc _ _ _ = return []
+{-# INLINE adjsVLoc #-}
 
--- -- JoinTest VISUALIZATION
+-- JoinTest VISUALIZATION
 
--- instance Vnable JoinTest where
---   toVnAdjs = adjsJoinTest
---   toVnShow = showJoinTest
+instance Vnable JoinTest where
+  toVnAdjs = adjsJoinTest
+  toVnShow = showJoinTest
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
--- showJoinTest :: JoinTest -> Flags -> Visited -> STM ShowS
--- showJoinTest
---   JoinTest { joinTestField1   = f1
---            , joinTestField2   = f2
---            , joinTestDistance = d } _ _ =
---     return (compose [ showString "⟨"
---                     , shows f1, showString ","
---                     , shows d,  showString ","
---                     , shows f2
---                     , showString "⟩"])
--- {-# INLINE showJoinTest #-}
+showJoinTest :: JoinTest -> Flags -> Visited -> STM ShowS
+showJoinTest
+  JoinTest { joinField1   = f1
+           , joinField2   = f2
+           , joinDistance = d } _ _ =
+    return (compose [ showString "⟨"
+                    , shows f1, showString ","
+                    , shows d,  showString ","
+                    , shows f2
+                    , showString "⟩"])
+{-# INLINE showJoinTest #-}
 
--- adjsJoinTest :: JoinTest -> Flags -> Visited -> STM [Vn]
--- adjsJoinTest _ _ _ = return []
--- {-# INLINE adjsJoinTest #-}
+adjsJoinTest :: JoinTest -> Flags -> Visited -> STM [Vn]
+adjsJoinTest _ _ _ = return []
+{-# INLINE adjsJoinTest #-}
 
--- -- MISC.
+-- PRINT IMPLEMENTATION
 
--- unreachableCode :: String -> a
--- unreachableCode tag
---   = error ("Unreachable code. Impossible has happened!!! " ++ tag)
--- {-# INLINE unreachableCode #-}
+-- | Converts the selected object to a tree representation (expressed
+-- in ShowS).
+toShowS :: Vnable a => Depth -> Switch -> a -> STM ShowS
+toShowS d switch obj = printTree (switches conf) (toVn cleanVisited obj)
+  where switches = d . applySwitch switch
+{-# INLINE toShowS #-}
 
--- -- PRINT IMPLEMENTATION
+-- | Works like toShowS, but returns String instead of ShowS
+toString :: Vnable a => Depth -> Switch -> a -> STM String
+toString d switch = liftM evalShowS . toShowS d switch
+  where evalShowS s = s ""
+{-# INLINE toString #-}
 
--- -- | Converts the selected object to a tree representation (expressed
--- -- in ShowS).
--- toShowS :: Vnable a => Depth -> Switch -> a -> STM ShowS
--- toShowS d switch obj = printTree (switches conf) (toVn cleanVisited obj)
---   where switches = d . applySwitch switch
--- {-# INLINE toShowS #-}
+-- PREDEFINED PRINT CONFIGURATIONS
 
--- -- | Works like toShowS, but returns String instead of ShowS
--- toString :: Vnable a => Depth -> Switch -> a -> STM String
--- toString d switch = liftM evalShowS . toShowS d switch
---   where evalShowS s = s ""
--- {-# INLINE toString #-}
+-- | A 'Switch' for presenting sole Rete net bottom-up.
+soleNetBottomUp :: Switch
+soleNetBottomUp = up . with NetEmph . withNet . withIds . with AmemFields
+                . with Uls
 
--- -- PREDEFINED PRINT CONFIGURATIONS
-
--- -- | A 'Switch' for presenting sole Rete net bottom-up.
--- soleNetBottomUp :: Switch
--- soleNetBottomUp = up . with NetEmph . withNet . withIds . with AmemFields
---                 . with Uls
-
--- -- | A 'Switch' for presenting sole Rete net top-down.
--- soleNetTopDown :: Switch
--- soleNetTopDown = down . with NetEmph . withNet . withIds . with AmemFields
---                . with Uls
+-- | A 'Switch' for presenting sole Rete net top-down.
+soleNetTopDown :: Switch
+soleNetTopDown = down . with NetEmph . withNet . withIds . with AmemFields
+               . with Uls
