@@ -215,7 +215,9 @@ data Visited = Visited { visitedWmes  :: !(Set.HashSet Wme )
                        , visitedBmems :: !(Set.HashSet Bmem)
                        , visitedJoins :: !(Set.HashSet Join)
                        , visitedNegs  :: !(Set.HashSet Neg )
-                       , visitedProds :: !(Set.HashSet Prod) }
+                       , visitedProds :: !(Set.HashSet Prod)
+
+                       , visitedDtn   :: !Bool }
 
 cleanVisited :: Visited
 cleanVisited =  Visited { visitedWmes  = Set.empty
@@ -226,7 +228,8 @@ cleanVisited =  Visited { visitedWmes  = Set.empty
                         , visitedBmems = Set.empty
                         , visitedJoins = Set.empty
                         , visitedNegs  = Set.empty
-                        , visitedProds = Set.empty }
+                        , visitedProds = Set.empty
+                        , visitedDtn   = False }
 
 class Visitable a where
   visiting :: a -> Visited -> Visited
@@ -283,6 +286,12 @@ instance Visitable Neg where
 instance Visitable Prod where
   visiting prod vs = vs { visitedProds = Set.insert prod (visitedProds vs) }
   visited  prod vs = Set.member prod (visitedProds vs)
+  {-# INLINE visiting #-}
+  {-# INLINE visited  #-}
+
+instance Visitable Dtn where
+  visiting _ vs = vs { visitedDtn = True }
+  visited  _    = visitedDtn
   {-# INLINE visiting #-}
   {-# INLINE visited  #-}
 
@@ -736,11 +745,89 @@ bmemAdjs bmem flags vs = whenNot (visited bmem vs) $ do
 
   optVns [pVn, cVn, tVn]
 
+-- DTN VIS.
+
+instance Vnable Dtn where
+  toVnAdjs       = dtnAdjs
+  toVnShow _ _ _ = return (showString "DTN")
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+dtnAdjs :: Dtn -> Flags -> Visited -> STM [Vn]
+dtnAdjs dtn flags vs = whenNot (visited dtn vs) $ do
+  let vs'      = visiting dtn vs
+      children = liftM Map.elems (readTVar (dtnAllChildren dtn))
+  cVn   <- netVn flags (is NodeChildren flags) "children (all)" vs' children
+  optVns [cVn]
+
 -- JOIN VIS.
 
 instance Vnable Join where
-  toVnAdjs = undefined -- adjsAmem
-  toVnShow = undefined -- showAmem
+  toVnAdjs = joinAdjs
+  toVnShow = showJoin
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+ulSign :: Bool -> Char
+ulSign True  = '-'  -- unlinked
+ulSign False = '+'  -- linked
+{-# INLINE ulSign #-}
+
+ulMark :: TVar Bool -> TVar Bool -> STM String
+ulMark lu ru = do
+  l <- readTVar lu
+  r <- readTVar ru
+  return [ulSign l, '/', ulSign r]
+{-# INLINE ulMark #-}
+
+ulSingleMark :: TVar Bool -> STM String
+ulSingleMark unl = do
+  u <- readTVar unl
+  return ['/', ulSign u]
+{-# INLINE ulSingleMark #-}
+
+showJoin :: Join -> Flags -> Visited -> STM ShowS
+showJoin join flags vs = withEllipsisT (visited join vs) $ do
+  let lu = joinLeftUnlinked  join
+      ru = joinRightUnlinked join
+
+  s <- if is Uls flags
+         then (do mark <- ulMark lu ru
+                  return (showString ("J " ++ mark)))
+         else return (showString "J")
+
+  return (withOptIdS (is NodeIds flags) s (joinId join))
+{-# INLINE showJoin #-}
+
+joinAdjs :: Join -> Flags -> Visited -> STM [Vn]
+joinAdjs join flags vs = whenNot (visited join vs) $ do
+  (bmem, negs, prods) <- joinChildren join
+  let vs'       = visiting            join vs
+      parent    = joinParent          join
+      tests     = joinTests           join
+      amem      = joinAmem            join
+      ancestor  = joinNearestAncestor join
+      ancestor' = return $ case ancestor of { Just a  -> [a]; Nothing -> [] }
+      childBmem = return $ case bmem     of { Just b  -> [b]; Nothing -> [] }
+
+  pVn  <- netVn flags (is NodeParents  flags) "parent" vs' (return [parent])
+
+  cbVn <- netVn flags (is NodeChildren flags) "child bmem"  vs' childBmem
+  cnVn <- netVn flags (is NodeChildren flags) "child negs"  vs' (return negs    )
+  cpVn <- netVn flags (is NodeChildren flags) "child prods" vs' (return prods   )
+
+  tVn  <- netVn flags (is JoinTests            flags) "tests" vs' (return tests )
+  aVn  <- netVn flags (is JoinAmems            flags) "amem"  vs' (return [amem])
+  anVn <- netVn flags (is JoinNearestAncestors flags) "ancestor" vs' ancestor'
+
+  optVns [pVn, cbVn, cnVn, cpVn, aVn, anVn, tVn]
+
+instance Vnable (Either Dtn Bmem) where
+  toVnAdjs (Left  dtn ) = toVnAdjs dtn
+  toVnAdjs (Right bmem) = toVnAdjs bmem
+
+  toVnShow (Left  dtn ) = toVnShow dtn
+  toVnShow (Right bmem) = toVnShow bmem
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
 
@@ -767,9 +854,9 @@ showProd prod flags vs = withEllipsis (visited prod vs) $
 
 prodAdjs :: Prod -> Flags -> Visited -> STM [Vn]
 prodAdjs prod flags vs = whenNot (visited prod vs) $ do
-  let vs'    = visiting       prod vs
-      parent = prodParent     prod
-      toks   = prodToks       prod
+  let vs'      = visiting     prod vs
+      parent   = prodParent   prod
+      toks     = prodToks     prod
       bindings = prodBindings prod
 
   pVn <- netVn flags (is NodeParents  flags) "parent" vs' (return   [parent])
@@ -832,38 +919,6 @@ instance Vnable (Either Join Neg) where
 --       optVns (variantVns ++ [parentVn, childrenVn])
 -- {-# INLINE adjsNode #-}
 
--- -- Bmem VISUALIZATION
-
--- showBmem :: NodeVariant -> Flags ->  STM ShowS
--- showBmem _ _ = return (showString "β")
--- {-# INLINE showBmem #-}
-
--- adjsBmem :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsBmem Bmem { nodeToks = toks } flags vs' = adjsBmemLike toks flags vs'
--- adjsBmem _                        _  _   = unreachableCode "adjsBmem"
--- {-# INLINE adjsBmem #-}
-
--- isBmemLike :: NodeVariant -> Bool
--- isBmemLike Bmem {} = True
--- isBmemLike DTN  {} = True
--- isBmemLike _       = False
--- {-# INLINE isBmemLike #-}
-
--- adjsBmemLike :: TSet Tok -> Flags -> Visited -> STM [Maybe Vn]
--- adjsBmemLike toks flags vs' = do
---     toksVn <- datPropVn flags (is BmemToks flags) "toks" vs' (readTVar toks)
---     return [toksVn]
--- {-# INLINE adjsBmemLike #-}
-
--- -- | In the case of Bmems and STM We merge nodeChildren and
--- -- bmemAllChildren.
--- bmemLikeChildren :: Node -> STM (Set.HashSet Node)
--- bmemLikeChildren node = do
---   children    <- liftM Set.fromList (toListT (nodeChildren node))
---   allChildren <- rvprop bmemAllChildren node
---   return (children `Set.union` allChildren)
--- {-# INLINE bmemLikeChildren #-}
-
 -- -- DTN VISUALIZATION
 
 -- adjsDTN :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
@@ -871,45 +926,12 @@ instance Vnable (Either Join Neg) where
 -- adjsDTN _                       _  _   = unreachableCode "adjsDTN"
 -- {-# INLINE adjsDTN #-}
 
--- -- JoinNode VISUALIZATION
-
--- showJoinNode :: NodeVariant -> Flags -> STM ShowS
--- showJoinNode JoinNode { leftUnlinked = lu, rightUnlinked = ru } flags =
---     if is Uls flags
---       then (do mark <- ulMark lu ru
---                return (showString ('⊳':'⊲':' ':mark)))
---       else return (showString "⊳⊲")
-
--- showJoinNode _ _ = unreachableCode "showJoinNode"
--- {-# INLINE showJoinNode #-}
-
--- ulSign :: Bool -> Char
--- ulSign True  = '-'  -- unlinked
--- ulSign False = '+'  -- linked
--- {-# INLINE ulSign #-}
-
--- ulMark :: TVar Bool -> TVar Bool -> STM String
--- ulMark lu ru = do
---   l <- readTVar lu
---   r <- readTVar ru
---   return [ulSign l, '/', ulSign r]
--- {-# INLINE ulMark #-}
-
--- ulSingleMark :: TVar Bool -> STM String
--- ulSingleMark unl = do
---   u <- readTVar unl
---   return ['/', ulSign u]
--- {-# INLINE ulSingleMark #-}
-
 -- adjsJoinNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
 -- adjsJoinNode
 --   JoinNode { joinTests                   = tests
 --            , nodeAmem                    = amem
 --            , nearestAncestorWithSameAmem = ancestor } flags vs' = do
---     testsVn    <- netPropVn flags (is JoinTests flags) "tests" vs' (return tests)
---     amemVn     <- netPropVn flags (is JoinAmems flags) "amem"  vs' (return [amem])
---     ancestorVn <- netPropVn flags (is JoinNearestAncestors flags) "ancestor" vs'
---                   (joinAncestorM ancestor)
+
 --     return [amemVn, ancestorVn, testsVn]
 
 -- adjsJoinNode _ _ _ = unreachableCode "adjsJoinNode"
