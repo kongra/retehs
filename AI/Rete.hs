@@ -31,7 +31,7 @@ module AI.Rete
     , n
     , N
 
-      -- * Adding/removing 'Wme's
+      -- * Adding/removing Wmes
     , addWme
     , removeWme
 
