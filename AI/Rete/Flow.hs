@@ -168,6 +168,13 @@ emptyVariable =  Variable (-2) "?"
 wildcardConstant :: Constant
 wildcardConstant = Constant (-3) "*"
 
+class IsWildcard a where isWildcard :: a -> Bool
+
+instance IsWildcard Symbol where
+  isWildcard (Const c) = c == wildcardConstant
+  isWildcard (Var   _) = False
+  {-# INLINE isWildcard #-}
+
 -- INTERNING CONSTANTS AND VARIABLES
 
 class Symbolic a where

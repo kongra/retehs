@@ -33,11 +33,6 @@ import           Data.Tree.Print
 import           Kask.Control.Monad (toListM, mapMM)
 import           Kask.Data.Function (compose, rcompose)
 
---
--- import           Data.Maybe (catMaybes, fromJust)
--- import           Data.Tree.Print
--- import           Kask.Control.Monad (toListM, mapMM)
-
 -- CONFIGURATION
 
 -- | A Boolean (semanticaly) configuration option for the printing
@@ -517,7 +512,6 @@ wmeAdjs
                  (mapMM (return . njrOwner) (toListT jresults))
 
       optVns [amemsVn, toksVn, njrsVn]
-{-# INLINE wmeAdjs #-}
 
 -- GENERALIZED TOKEN VIS.
 
@@ -593,7 +587,6 @@ tokAdjs flags vs' node parent children = do
   pVn <- datVn flags (is TokParents  flags) "parent"   vs' (return   [parent])
   cVn <- datVn flags (is TokChildren flags) "children" vs' (readTVar children)
   return (nVn, pVn, cVn)
-{-# INLINE tokAdjs #-}
 
 -- DTT VIS.
 
@@ -617,9 +610,9 @@ btokAdjs btok flags vs = whenNot (visited btok vs) $ do
       node     = btokNode     btok
       parent   = btokParent   btok
       children = btokChildren btok
+
   (nVn, pVn, cVn) <- tokAdjs flags vs' node parent children
   optVns [nVn, pVn, cVn]
-{-# INLINE btokAdjs #-}
 
 -- NTOK VIS.
 
@@ -665,51 +658,54 @@ ptokAdjs ptok flags vs = whenNot (visited ptok vs) $ do
   nVn <- netVn flags (is TokNodes    flags) "node"   vs' (return [node]  )
   pVn <- datVn flags (is TokParents  flags) "parent" vs' (return [parent])
   optVns [nVn, pVn]
-{-# INLINE ptokAdjs #-}
 
 -- AMEMS VISUALIZATION
 
 instance Vnable Amem where
-  toVnAdjs = undefined -- adjsAmem
-  toVnShow = undefined -- showAmem
+  toVnAdjs = amemAdjs
+  toVnShow = showAmem
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
 
--- showAmem :: Amem -> Flags -> Visited -> STM ShowS
--- showAmem
---   amem@Amem { amemObj            = obj
---             , amemAttr           = attr
---             , amemVal            = val
---             , amemReferenceCount = rcount } flags vs = do
---     let alpha = showString "α"
---     let repr  = if is AmemFields flags
---                   then compose [alpha, showString " ("
---                                 , sS obj,  showString ","
---                                 , sS attr, showString ","
---                                 , sS val
---                                 , showString ")"]
---                   else alpha
---     withEllipsisT (visited amem vs) $
---       if is AmemRefCounts flags
---         then (do rc <- readTVar rcount
---                  return $ compose [repr, showString " refcount ", shows rc])
---         else return repr
---   where
---     sS s | s == wildcardSymbol = showString "*"
---          | otherwise           = shows s
--- {-# INLINE showAmem #-}
+showAmem :: Amem -> Flags -> Visited -> STM ShowS
+showAmem amem flags vs = do
+  let (Obj  o) = amemObj    amem
+      (Attr a) = amemAttr   amem
+      (Val  v) = amemVal    amem
+      alpha    = showString "A"
+      repr     = if is AmemFields flags
+                   then compose [ alpha, showString " ("
+                                , sS o , showString ","
+                                , sS a , showString ","
+                                , sS v , showString ")"]
+                   else alpha
+  withEllipsisT (visited amem vs) $
+    if is AmemRefCounts flags
+      then (do rc <- readTVar (amemRefCount amem)
+               return $ compose [repr, showString " rc ", shows rc])
+      else return repr
+  where
+    sS s | isWildcard s = showString "*"
+         | otherwise    = showString (show s)
+{-# INLINE showAmem #-}
 
--- adjsAmem :: Amem -> Flags -> Visited -> STM [Vn]
--- adjsAmem
---   amem@Amem { amemSuccessors  = succs
---             , amemWmes        = wmes } flags vs =
---     whenNot (visited amem vs) $ do
---       let vs' = visiting amem vs
---       succVn <- netPropVn flags (is AmemSuccessors flags) "successors" vs'
---                 (readTVar succs)
---       wmesVn <- datPropVn flags (is AmemWmes flags) "wmes" vs' (readTVar wmes)
---       optVns [succVn, wmesVn]
--- {-# INLINE adjsAmem #-}
+amemAdjs :: Amem -> Flags -> Visited -> STM [Vn]
+amemAdjs amem flags vs = whenNot (visited amem vs) $ do
+  let vs'   = visiting       amem vs
+      succs = amemSuccessors amem
+      wmes  = amemWmes       amem
+  succVn <- netVn flags (is AmemSuccessors flags) "succs" vs' (readTVar succs)
+  wmesVn <- datVn flags (is AmemWmes       flags) "wmes"  vs' (readTVar wmes )
+  optVns [succVn, wmesVn]
+
+instance Vnable AmemSuccessor where
+  toVnAdjs (JoinSuccessor join) = toVnAdjs join
+  toVnAdjs (NegSuccessor  neg ) = toVnAdjs neg
+
+  toVnShow (JoinSuccessor join) = toVnShow join
+  toVnShow (NegSuccessor  neg ) = toVnShow neg
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
 -- BMEM VIS.
 
@@ -719,7 +715,16 @@ instance Vnable Bmem where
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
 
+-- JOIN VIS.
+
+instance Vnable Join where
+  toVnAdjs = undefined -- adjsAmem
+  toVnShow = undefined -- showAmem
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
 -- NEG VIS.
+
 instance Vnable Neg where
   toVnAdjs = undefined -- adjsAmem
   toVnShow = undefined -- showAmem
