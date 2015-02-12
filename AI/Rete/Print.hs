@@ -710,10 +710,31 @@ instance Vnable AmemSuccessor where
 -- BMEM VIS.
 
 instance Vnable Bmem where
-  toVnAdjs = undefined -- adjsAmem
-  toVnShow = undefined -- showAmem
+  toVnAdjs = bmemAdjs
+  toVnShow = showBmem
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
+
+showBmem :: Bmem -> Flags -> Visited -> STM ShowS
+showBmem bmem flags vs = withEllipsis (visited bmem vs) $
+  withOptIdS (is NodeIds flags) (showString "B") (bmemId bmem)
+{-# INLINE showBmem #-}
+
+bmemAdjs :: Bmem -> Flags -> Visited -> STM [Vn]
+bmemAdjs bmem flags vs = whenNot (visited bmem vs) $ do
+  let vs'    = visiting   bmem vs
+      parent = bmemParent bmem
+      toks   = bmemToks   bmem
+
+  pVn   <- netVn flags (is NodeParents flags) "parent" vs' (return [parent])
+  tVn   <- datVn flags (is BmemToks    flags) "toks"   vs' (readTVar toks)
+
+  allC  <- liftM Map.elems (readTVar (bmemAllChildren bmem))
+  c     <- readTVar (bmemChildren bmem)
+  let c' = Set.fromList allC `Set.union` c
+  cVn   <- netVn flags (is NodeChildren flags) "children (all)" vs' (return c')
+
+  optVns [pVn, cVn, tVn]
 
 -- JOIN VIS.
 
@@ -734,35 +755,41 @@ instance Vnable Neg where
 -- PROD VIS.
 
 instance Vnable Prod where
-  toVnAdjs = undefined -- adjsAmem
-  toVnShow = undefined -- showAmem
+  toVnAdjs = prodAdjs
+  toVnShow = showProd
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
 
--- -- NODE VISUALIZATION
+showProd :: Prod -> Flags -> Visited -> STM ShowS
+showProd prod flags vs = withEllipsis (visited prod vs) $
+  withOptIdS (is NodeIds flags) (showString "P") (prodId prod)
+{-# INLINE showProd #-}
 
--- instance Vnable Node where
---   toVnAdjs = adjsNode
---   toVnShow = showNode
+prodAdjs :: Prod -> Flags -> Visited -> STM [Vn]
+prodAdjs prod flags vs = whenNot (visited prod vs) $ do
+  let vs'    = visiting       prod vs
+      parent = prodParent     prod
+      toks   = prodToks       prod
+      bindings = prodBindings prod
+
+  pVn <- netVn flags (is NodeParents  flags) "parent" vs' (return   [parent])
+  vVn <- netVn flags (is ProdBindings flags) "vars"   vs' (varlocs  bindings)
+  tVn <- datVn flags (is ProdToks     flags) "toks"   vs' (readTVar toks    )
+
+  optVns [vVn, pVn, tVn]
+
+instance Vnable (Either Join Neg) where
+  toVnAdjs (Left  join) = toVnAdjs join
+  toVnAdjs (Right neg ) = toVnAdjs neg
+
+  toVnShow (Left  join) = toVnShow join
+  toVnShow (Right neg ) = toVnShow neg
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
 -- showNode :: Node -> Flags -> Visited -> STM ShowS
 -- showNode node@DummyTopNode {} _ vs =
 --   withEllipsis (visited node vs) $ showString "DTN (β)"
-
--- showNode node flags vs = do
---   let variant = nodeVariant node
---   s <- case variant of
---     Bmem       {} -> showBmem       variant flags
---     JoinNode   {} -> showJoinNode   variant flags
---     NegNode    {} -> showNegNode    variant flags
---     NccNode    {} -> showNccNode    variant flags
---     NccPartner {} -> showNccPartner variant flags
---     PNode      {} -> showPNode      variant flags
---     DTN        {} -> unreachableCode "showNode"
-
---   withEllipsis (visited node vs) $
---     withOptIdS (is NodeIds flags) s (nodeId node)
--- {-# INLINE showNode #-}
 
 -- adjsNode :: Node -> Flags -> Visited -> STM [Vn]
 -- adjsNode node@DummyTopNode { nodeVariant = variant } flags vs =
@@ -921,23 +948,7 @@ instance Vnable Prod where
 
 -- adjsNegNode _ _ _ = unreachableCode "adjsNegNode"
 
--- showPNode :: NodeVariant -> Flags -> STM ShowS
--- showPNode PNode {} _ = return (showString "P")
--- showPNode _        _ = unreachableCode "showPNode"
--- {-# INLINE showPNode #-}
-
--- adjsPNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsPNode
---   PNode { nodeToks              = toks
---         , pnodeVariableBindings = bindings } flags vs' = do
---     toksVn <- datPropVn flags (is PNodeToks     flags) "toks" vs' (readTVar toks)
---     varsVn <- netPropVn flags (is PNodeBindings flags) "vars" vs' (varlocs bindings)
---     return [varsVn, toksVn]
-
--- adjsPNode _ _ _ = unreachableCode "adjsPNode"
--- {-# INLINE adjsPNode #-}
-
--- VARIABLE LOCATIONS VISUALIZATION
+-- VARIABLE LOCATIONS VIS.
 
 data VLoc = VLoc !Variable !Int !Field
 
