@@ -177,6 +177,7 @@ instance IsWildcard Symbol where
 
 -- INTERNING CONSTANTS AND VARIABLES
 
+-- | Represents a thing that may be treated as a Symbol.
 class Symbolic a where
   -- | Interns and returns a Symbol for the name argument.
   internSymbol :: Env -> a -> STM Symbol
