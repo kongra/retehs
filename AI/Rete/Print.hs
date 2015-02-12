@@ -27,14 +27,13 @@ import           Data.Foldable (Foldable)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable, hashWithSalt)
+import           Data.List (intersperse)
 import           Data.Maybe (catMaybes)
 import           Data.Tree.Print
 import           Kask.Control.Monad (toListM, mapMM)
-import           Kask.Data.Function (compose)
+import           Kask.Data.Function (compose, rcompose)
 
 --
---
--- import           Data.List (intersperse)
 -- import           Data.Maybe (catMaybes, fromJust)
 -- import           Data.Tree.Print
 -- import           Kask.Control.Monad (toListM, mapMM)
@@ -466,7 +465,7 @@ applySwitch switch c@Conf { opts = opts' } = c { opts = switch opts' }
 stmImpl :: Impl STM ShowS
 stmImpl = str
 
--- -- WMES VISUALIZATION
+-- WMES VIS.
 
 instance Vnable Wme where
   toVnShow = showWme
@@ -520,7 +519,7 @@ wmeAdjs
       optVns [amemsVn, toksVn, njrsVn]
 {-# INLINE wmeAdjs #-}
 
--- TOKENS VISUALIZATION
+-- GENERALIZED TOKEN VIS.
 
 instance Vnable WmeTok where
   toVnAdjs (BmemWmeTok btok ) = toVnAdjs btok
@@ -533,96 +532,142 @@ instance Vnable WmeTok where
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
 
-instance Vnable Btok where
-  toVnAdjs = undefined -- adjsTok
-  toVnShow = undefined -- showTok
+instance Vnable (Either Dtt Btok) where
+  toVnAdjs (Left  dtt ) = toVnAdjs dtt
+  toVnAdjs (Right btok) = toVnAdjs btok
+
+  toVnShow (Left  dtt ) = toVnShow dtt
+  toVnShow (Right btok) = toVnShow btok
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
+
+instance Vnable (Either JoinTok Ntok) where
+  toVnAdjs (Left  jtok) = toVnAdjs jtok
+  toVnAdjs (Right ntok) = toVnAdjs ntok
+
+  toVnShow (Left  jtok) = toVnShow jtok
+  toVnShow (Right ntok) = toVnShow ntok
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+instance Vnable (Either Ntok Ptok) where
+  toVnAdjs (Left  ntok) = toVnAdjs ntok
+  toVnAdjs (Right ptok) = toVnAdjs ptok
+
+  toVnShow (Left  ntok) = toVnShow ntok
+  toVnShow (Right ptok) = toVnShow ptok
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+showTokWmesSymbolic :: TokWmes a => a -> ShowS
+showTokWmesSymbolic = showTokWmes showWmeSymbolic
+{-# INLINE showTokWmesSymbolic #-}
+
+showTokWmesExplicit :: TokWmes a => Bool -> a -> ShowS
+showTokWmesExplicit owmeids = showTokWmes (showWmeExplicit owmeids)
+{-# INLINE showTokWmesExplicit #-}
+
+showTokWmes :: TokWmes a => (Wme -> ShowS) -> a -> ShowS
+showTokWmes f = rcompose
+              . intersperse (showString ",")
+              . map (showWmeMaybe f)
+              . tokWmes
+{-# INLINE showTokWmes #-}
+
+showTok :: (Visitable a, TokWmes a)
+        => (a -> Id) -> a -> Flags -> Visited -> STM ShowS
+showTok tokId tok flags vs = do
+  let s = if is TokWmes flags
+            then (if is TokWmesSymbolic flags
+                    then showTokWmesSymbolic tok
+                    else showTokWmesExplicit (is WmeIds flags) tok)
+            else showString "{..}"
+  withEllipsis (visited tok vs) $ withOptIdS (is TokIds flags) s (tokId tok)
+{-# INLINE showTok #-}
+
+tokAdjs :: (Vnable n, Vnable p, Vnable c, Foldable f) =>
+           Flags -> Visited -> n -> p -> TVar (f c)
+           -> STM (Maybe Vn, Maybe Vn, Maybe Vn)
+tokAdjs flags vs' node parent children = do
+  nVn <- netVn flags (is TokNodes    flags) "node"     vs' (return   [node]  )
+  pVn <- datVn flags (is TokParents  flags) "parent"   vs' (return   [parent])
+  cVn <- datVn flags (is TokChildren flags) "children" vs' (readTVar children)
+  return (nVn, pVn, cVn)
+{-# INLINE tokAdjs #-}
+
+-- DTT VIS.
+
+instance Vnable Dtt where
+  toVnAdjs _ _  _ = return []
+  toVnShow _ fs _ = return (withOptIdS (is TokIds fs) (showString "{}") (-1))
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+-- BTOK VIS.
+
+instance Vnable Btok where
+  toVnAdjs = btokAdjs
+  toVnShow = showTok btokId
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+btokAdjs :: Btok -> Flags -> Visited -> STM [Vn]
+btokAdjs btok flags vs = whenNot (visited btok vs) $ do
+  let vs'      = visiting     btok vs
+      node     = btokNode     btok
+      parent   = btokParent   btok
+      children = btokChildren btok
+  (nVn, pVn, cVn) <- tokAdjs flags vs' node parent children
+  optVns [nVn, pVn, cVn]
+{-# INLINE btokAdjs #-}
+
+-- NTOK VIS.
 
 instance Vnable Ntok where
-  toVnAdjs = undefined -- adjsTok
-  toVnShow = undefined -- showTok
+  toVnAdjs = ntokAdjs
+  toVnShow = showTok ntokId
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
+
+ntokAdjs :: Ntok -> Flags -> Visited -> STM [Vn]
+ntokAdjs ntok flags vs = whenNot (visited ntok vs) $ do
+  let vs'      = visiting           ntok vs
+      node     = ntokNode           ntok
+      parent   = ntokParent         ntok
+      children = ntokChildren       ntok
+      jresults = ntokNegJoinResults ntok
+
+  (nVn, pVn, cVn) <- tokAdjs flags vs' node parent children
+  njrsVn          <- datVn flags (is TokNegJoinResults flags)
+                     "njrs (owners)" vs'
+                     -- When visualizing the negative join results we only
+                     -- show the owner wmes, cause owner in every negative join
+                     -- result is this tok.
+                     (mapMM (return . njrWme) (toListT jresults))
+
+  optVns [nVn, pVn, cVn, njrsVn]
+{-# INLINE ntokAdjs #-}
+
+-- PTOK VIS.
 
 instance Vnable Ptok where
-  toVnAdjs = undefined -- adjsTok
-  toVnShow = undefined -- showTok
+  toVnAdjs = ptokAdjs
+  toVnShow = showTok ptokId
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
 
--- showTok :: Tok -> Flags -> Visited -> STM ShowS
--- showTok tok@DummyTopTok {} flags vs =
---   withEllipsis (visited tok vs) $
---     withOptIdS (is TokIds flags) (showString "{}") (-1)
+ptokAdjs :: Ptok -> Flags -> Visited -> STM [Vn]
+ptokAdjs ptok flags vs = whenNot (visited ptok vs) $ do
+  let vs'      = visiting     ptok vs
+      node     = ptokNode     ptok
+      parent   = ptokParent   ptok
 
--- showTok tok flags vs = do
---     let s = if is TokWmes flags
---               then (if is TokWmesSymbolic flags
---                       then showTokWmesSymbolic tok
---                       else showTokWmesExplicit (is WmeIds flags) tok)
---               else showString "{..}"
---     withEllipsis (visited tok vs) $
---       withOptIdS (is TokIds flags) s (tokId tok)
--- {-# INLINE showTok #-}
+  nVn <- netVn flags (is TokNodes    flags) "node"   vs' (return [node]  )
+  pVn <- datVn flags (is TokParents  flags) "parent" vs' (return [parent])
+  optVns [nVn, pVn]
+{-# INLINE ptokAdjs #-}
 
--- showTokWmesSymbolic :: Tok -> ShowS
--- showTokWmesSymbolic = showTokWmes showWmeSymbolic
--- {-# INLINE showTokWmesSymbolic #-}
-
--- showTokWmesExplicit :: Bool -> Tok -> ShowS
--- showTokWmesExplicit owmeids = showTokWmes (showWmeExplicit owmeids)
--- {-# INLINE showTokWmesExplicit #-}
-
--- showTokWmes :: (Wme -> ShowS) -> Tok -> ShowS
--- showTokWmes f = rcompose
---               . intersperse (showString ",")
---               . map (showWmeMaybe f)
---               . tokWmes
--- {-# INLINE showTokWmes #-}
-
--- adjsTok :: Tok -> Flags -> Visited -> STM [Vn]
--- adjsTok tok@DummyTopTok { tokNode  = node
---                         , tokChildren  = children } flags vs =
---   whenNot (visited tok vs) $ do
---     let vs' = visiting tok vs
---     nodeVn     <- netPropVn flags (is TokNodes flags) "node" vs'
---                   (return [node])
---     childrenVn <- datPropVn flags (is TokChildren flags) "children" vs'
---                   (readTVar children)
---     optVns [nodeVn, childrenVn]
-
--- adjsTok
---   tok@Tok { tokParent         = parent
---           , tokOwner          = mowner
---           , tokNode           = node
---           , tokChildren       = children
---           , tokNegJoinResults = jresults
---           , tokNccResults     = nresults } flags vs =
---     whenNot (visited tok vs) $ do
---       let vs' = visiting tok vs
---       nodeVn     <- netPropVn flags (is TokNodes   flags) "node"   vs' (return [node])
---       parentVn   <- datPropVn flags (is TokParents flags) "parent" vs' (return [parent])
---       ownerVn    <- datPropVn flags (is TokOwners  flags) "owner"  vs'
---                     (liftM owner (readTVar mowner))
---       childrenVn <- datPropVn flags (is TokChildren flags) "children" vs'
---                       (readTVar children)
---       jresultsVn <- datPropVn flags (is TokJoinResults flags) "neg. ⊳⊲ results (wmes)"
---                       vs'
---                       -- When visualizing the negative join results we only
---                       -- show the wmes, cause owner in every negative join
---                       -- result is this tok(en).
---                       (mapMM (return . negativeJoinResultWme) (toListT jresults))
---       nresultsVn <- datPropVn flags (is TokNccResults flags) "ncc results" vs'
---                       (readTVar nresults)
---       optVns [nodeVn, parentVn, ownerVn, childrenVn, jresultsVn, nresultsVn]
---     where
---       owner ow = case ow of
---         Nothing -> []
---         Just o  -> [o]
--- {-# INLINE adjsTok #-}
-
--- -- AMEMS VISUALIZATION
+-- AMEMS VISUALIZATION
 
 instance Vnable Amem where
   toVnAdjs = undefined -- adjsAmem
@@ -665,6 +710,29 @@ instance Vnable Amem where
 --       wmesVn <- datPropVn flags (is AmemWmes flags) "wmes" vs' (readTVar wmes)
 --       optVns [succVn, wmesVn]
 -- {-# INLINE adjsAmem #-}
+
+-- BMEM VIS.
+
+instance Vnable Bmem where
+  toVnAdjs = undefined -- adjsAmem
+  toVnShow = undefined -- showAmem
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+-- NEG VIS.
+instance Vnable Neg where
+  toVnAdjs = undefined -- adjsAmem
+  toVnShow = undefined -- showAmem
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
+-- PROD VIS.
+
+instance Vnable Prod where
+  toVnAdjs = undefined -- adjsAmem
+  toVnShow = undefined -- showAmem
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
 
 -- -- NODE VISUALIZATION
 
