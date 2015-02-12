@@ -17,7 +17,39 @@
 --
 -- Textual visualization of Rete network and data.
 ------------------------------------------------------------------------
-module AI.Rete.Print where
+module AI.Rete.Print
+    (
+      -- * Print methods
+      toShowS
+    , toString
+
+      -- * The 'Depth' constraints of the tree traversal process
+    , Depth
+    , depth
+    , boundless
+
+      -- * 'Switch'es
+    , Switch
+    , with, no, clear
+
+      -- * Predefined compound 'Switch'es
+    , soleNetTopDown
+    , soleNetBottomUp
+
+      -- * Predefined 'Switch'es
+    , withNet
+    , noNet
+    , withData
+    , noData
+    , up
+    , down
+    , withIds
+    , noIds
+
+      -- * 'Flag's (detailed)
+    , Flag (..)
+    )
+    where
 
 import           AI.Rete.Data
 import           AI.Rete.Flow
@@ -820,7 +852,7 @@ joinAdjs join flags vs = whenNot (visited join vs) $ do
   aVn  <- netVn flags (is JoinAmems            flags) "amem"  vs' (return [amem])
   anVn <- netVn flags (is JoinNearestAncestors flags) "ancestor" vs' ancestor'
 
-  optVns [pVn, cbVn, cnVn, cpVn, aVn, anVn, tVn]
+  optVns [pVn, aVn, anVn, tVn, cbVn, cnVn, cpVn]
 
 instance Vnable (Either Dtn Bmem) where
   toVnAdjs (Left  dtn ) = toVnAdjs dtn
@@ -834,10 +866,44 @@ instance Vnable (Either Dtn Bmem) where
 -- NEG VIS.
 
 instance Vnable Neg where
-  toVnAdjs = undefined -- adjsAmem
-  toVnShow = undefined -- showAmem
+  toVnAdjs = negAdjs
+  toVnShow = showNeg
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
+
+showNeg :: Neg -> Flags -> Visited -> STM ShowS
+showNeg neg flags vs = withEllipsisT (visited neg vs) $ do
+  let ru = negRightUnlinked neg
+  s     <- if is Uls flags
+             then (do mark <- ulSingleMark ru
+                      return (showString ("N " ++ mark)))
+             else return (showString "N")
+
+  return (withOptIdS (is NodeIds flags) s (negId neg))
+{-# INLINE showNeg #-}
+
+negAdjs :: Neg -> Flags -> Visited -> STM [Vn]
+negAdjs neg flags vs = whenNot (visited neg vs) $ do
+  (negs, prods) <- negChildren neg
+  let vs'       = visiting           neg vs
+      parent    = negParent          neg
+      tests     = negTests           neg
+      amem      = negAmem            neg
+      ancestor  = negNearestAncestor neg
+      ancestor' = return $ case ancestor of { Just a  -> [a]; Nothing -> [] }
+      toks      = readTVar  (negToks neg)
+
+  pVn  <- netVn flags (is NodeParents  flags) "parent" vs' (return [parent])
+
+  cnVn <- netVn flags (is NodeChildren flags) "child negs"  vs' (return negs    )
+  cpVn <- netVn flags (is NodeChildren flags) "child prods" vs' (return prods   )
+
+  tVn  <- netVn flags (is NegTests            flags) "tests" vs' (return tests )
+  aVn  <- netVn flags (is NegAmems            flags) "amem"  vs' (return [amem])
+  anVn <- netVn flags (is NegNearestAncestors flags) "ancestor" vs' ancestor'
+  tkVn <- datVn flags (is NegToks             flags) "toks"     vs' toks
+
+  optVns [pVn, aVn, anVn, tVn, cnVn, cpVn, tkVn]
 
 -- PROD VIS.
 
@@ -873,102 +939,6 @@ instance Vnable (Either Join Neg) where
   toVnShow (Right neg ) = toVnShow neg
   {-# INLINE toVnShow #-}
   {-# INLINE toVnAdjs #-}
-
--- showNode :: Node -> Flags -> Visited -> STM ShowS
--- showNode node@DummyTopNode {} _ vs =
---   withEllipsis (visited node vs) $ showString "DTN (β)"
-
--- adjsNode :: Node -> Flags -> Visited -> STM [Vn]
--- adjsNode node@DummyTopNode { nodeVariant = variant } flags vs =
---   whenNot (visited node vs) $ do
---     let vs' = visiting node vs
---     -- In the case of DTM, just like in any β memory, we traverse down
---     -- using all children, also the unlinked ones.
---     childrenVn <- netPropVn flags (is NodeChildren flags) "children (with all)" vs'
---                   (bmemLikeChildren node)
---                   -- (rvprop bmemAllChildren node)
---     variantVns <- adjsDTN variant flags vs'
---     optVns (variantVns ++ [childrenVn])
-
--- adjsNode
---   node@Node { nodeParent    = parent
---             , nodeChildren  = children
---             , nodeVariant   = variant } flags vs =
---     whenNot (visited node vs) $ do
---       let vs' = visiting node vs
---       parentVn <- netPropVn flags (is NodeParents  flags) "parent" vs'
---                   (return [parent])
-
---       -- In the case of β memory, we traverse down using all children,
---       -- also the unlinked ones.
---       childrenVn <- if isBmemLike variant
---                       then netPropVn flags (is NodeChildren flags)
---                            "children (with all)" vs' (bmemLikeChildren node)
---                       else netPropVn flags (is NodeChildren flags) "children"
---                            vs' (readTVar children)
-
---       variantVns <- case variant of
---         Bmem       {} -> adjsBmem       variant flags vs'
---         JoinNode   {} -> adjsJoinNode   variant flags vs'
---         NegNode    {} -> adjsNegNode    variant flags vs'
---         NccNode    {} -> adjsNccNode    variant flags vs'
---         NccPartner {} -> adjsNccPartner variant flags vs'
---         PNode      {} -> adjsPNode      variant flags vs'
---         DTN        {} -> unreachableCode "adjsNode"
-
---       optVns (variantVns ++ [parentVn, childrenVn])
--- {-# INLINE adjsNode #-}
-
--- -- DTN VISUALIZATION
-
--- adjsDTN :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsDTN DTN { nodeToks = toks } flags vs' = adjsBmemLike toks flags vs'
--- adjsDTN _                       _  _   = unreachableCode "adjsDTN"
--- {-# INLINE adjsDTN #-}
-
--- adjsJoinNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsJoinNode
---   JoinNode { joinTests                   = tests
---            , nodeAmem                    = amem
---            , nearestAncestorWithSameAmem = ancestor } flags vs' = do
-
---     return [amemVn, ancestorVn, testsVn]
-
--- adjsJoinNode _ _ _ = unreachableCode "adjsJoinNode"
-
--- joinAncestorM :: Monad m => Maybe a -> m [a]
--- joinAncestorM ancestor = case ancestor of
---   Nothing -> return []
---   Just a  -> return [a]
--- {-# INLINE joinAncestorM #-}
-
--- -- NegNode VISUALIZATION
-
--- showNegNode :: NodeVariant -> Flags -> STM ShowS
--- showNegNode
---   NegNode { rightUnlinked = ru } flags =
---     if is Uls flags
---       then (do mark <- ulSingleMark ru
---                return (showString ('¬':' ':mark)))
---       else return (showString "¬")
-
--- showNegNode _ _ = unreachableCode "showNegNode"
--- {-# INLINE showNegNode #-}
-
--- adjsNegNode :: NodeVariant -> Flags -> Visited -> STM [Maybe Vn]
--- adjsNegNode
---   NegNode { joinTests                   = tests
---           , nodeAmem                    = amem
---           , nearestAncestorWithSameAmem = ancestor
---           , nodeToks                  = toks} flags vs' = do
---     amemVn     <- netPropVn flags (is NegAmems flags) "amem"  vs' (return [amem])
---     testsVn    <- netPropVn flags (is NegTests flags) "tests" vs' (return tests)
---     ancestorVn <- netPropVn flags (is NegNearestAncestors flags) "ancestor" vs'
---                     (joinAncestorM ancestor)
---     toksVn     <- datPropVn flags (is NegToks  flags) "toks" vs' (readTVar toks)
---     return [amemVn, ancestorVn, testsVn, toksVn]
-
--- adjsNegNode _ _ _ = unreachableCode "adjsNegNode"
 
 -- VARIABLE LOCATIONS VIS.
 
