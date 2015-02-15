@@ -21,8 +21,10 @@ import           Data.Foldable (Foldable, toList)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable)
+import           Data.Int
 import           Data.Maybe (fromMaybe, isJust, fromJust, isNothing)
 import qualified Data.Sequence as Seq
+import           Data.Word
 import           Kask.Control.Monad (forMM_, toListM, whenM)
 import           Kask.Data.List (nthDef)
 import           Kask.Data.Sequence
@@ -160,13 +162,13 @@ genid Env { envIdState = eid } = do
 -- SPECIAL SYMBOLS
 
 emptyConstant :: Constant
-emptyConstant =  Constant (-1) ""
+emptyConstant =  StringConstant "" (-1)
 
 emptyVariable :: Variable
-emptyVariable =  Variable (-2) "?"
+emptyVariable =  StringVariable "?" (-2)
 
 wildcardConstant :: Constant
-wildcardConstant = Constant (-3) "*"
+wildcardConstant = StringConstant "*" (-3)
 
 class IsWildcard a where isWildcard :: a -> Bool
 
@@ -182,18 +184,77 @@ class Symbolic a where
   -- | Interns and returns a Symbol for the name argument.
   internSymbol :: Env -> a -> STM Symbol
 
-  -- | Only if there is an interned symbol of the given name,
-  -- returns Just it, Nothing otherwise.
-  internedSymbol :: Env -> a -> STM (Maybe Symbol)
-
 instance Symbolic Symbol where
   -- We may simply return the argument here, because Constants and
   -- Variables once interned never expire (get un-interned). Otherwise
   -- we would have to intern the argument's name.
   internSymbol   _ = return
-  internedSymbol _ = return . Just
   {-# INLINE internSymbol   #-}
-  {-# INLINE internedSymbol #-}
+
+instance Symbolic Primitive where
+  -- Every Primitive is treated as a Const.
+  internSymbol _ = return . Const . PrimitiveConstant
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Bool where
+  internSymbol env = internSymbol env . BoolPrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Char where
+  internSymbol env = internSymbol env . CharPrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Double where
+  internSymbol env = internSymbol env . DoublePrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Float where
+  internSymbol env = internSymbol env . FloatPrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Int where
+  internSymbol env = internSymbol env . IntPrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Int8 where
+  internSymbol env = internSymbol env . Int8Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Int16 where
+  internSymbol env = internSymbol env . Int16Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Int32 where
+  internSymbol env = internSymbol env . Int32Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Int64 where
+  internSymbol env = internSymbol env . Int64Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Integer where
+  internSymbol env = internSymbol env . IntegerPrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Word where
+  internSymbol env = internSymbol env . WordPrimitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Word8 where
+  internSymbol env = internSymbol env . Word8Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Word16 where
+  internSymbol env = internSymbol env . Word16Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Word32 where
+  internSymbol env = internSymbol env . Word32Primitive
+  {-# INLINE internSymbol #-}
+
+instance Symbolic Word64  where
+  internSymbol env = internSymbol env . Word64Primitive
+  {-# INLINE internSymbol #-}
 
 instance Symbolic String where
   internSymbol env name = case symbolName name of
@@ -202,15 +263,7 @@ instance Symbolic String where
     OneCharConst   -> liftM  Const (internConstant env name)
     MultiCharVar   -> liftM  Var   (internVariable env name)
     MultiCharConst -> liftM  Const (internConstant env name)
-
-  internedSymbol env name = case symbolName name of
-    EmptyConst     -> return $! Just (Const emptyConstant)
-    EmptyVar       -> return $! Just (Var   emptyVariable)
-    OneCharConst   -> internedConstant env name
-    MultiCharVar   -> internedVariable env name
-    MultiCharConst -> internedConstant env name
   {-# INLINE internSymbol   #-}
-  {-# INLINE internedSymbol #-}
 
 toObj :: (Symbolic o) => o -> Env -> STM Obj
 toObj o env = liftM Obj (internSymbol env o)
@@ -247,7 +300,7 @@ internConstant env name = do
     Just c  -> return c
     Nothing -> do
       id' <- genid env
-      let c = Constant id' name
+      let c = StringConstant name id'
       writeTVar (envConstants env) $! Map.insert name c cs
       return c
 {-# INLINE internConstant #-}
@@ -259,26 +312,10 @@ internVariable env name = do
     Just v  -> return v
     Nothing -> do
       id' <- genid env
-      let v = Variable id' name
+      let v = StringVariable name id'
       writeTVar (envVariables env) $! Map.insert name v vs
       return v
 {-# INLINE internVariable #-}
-
-internedConstant :: Env -> String -> STM (Maybe Symbol)
-internedConstant Env { envConstants = consts } name = do
-  cs <- readTVar consts
-  case Map.lookup name cs of
-    Nothing -> return Nothing
-    Just c  -> return $! Just (Const c)
-{-# INLINE internedConstant #-}
-
-internedVariable :: Env -> String -> STM (Maybe Symbol)
-internedVariable Env { envVariables = vars } name = do
-  vs <- readTVar vars
-  case Map.lookup name vs of
-    Nothing -> return Nothing
-    Just v  -> return $! Just (Var v)
-{-# INLINE internedVariable #-}
 
 internFields :: (Symbolic o, Symbolic a, Symbolic v)
              => Env -> o -> a -> v -> STM (Obj, Attr, Val)
@@ -290,6 +327,8 @@ internFields env o a v = liftM3 (,,) (internField env Obj  o)
 internField :: Symbolic a => Env -> (Symbol -> b) -> a -> STM b
 internField env f s = liftM f (internSymbol env s)
 {-# INLINE internField #-}
+
+-- TODO: EXPLICIT CONSTRUCTORS FOR CONSTANTS AND VARIABLES
 
 -- ALPHA MEMORY
 
@@ -797,19 +836,10 @@ class RemoveWme e where
 
 instance RemoveWme Env where
   removeWme env o a v = do
-    o' <- internedSymbol env o
-    a' <- internedSymbol env a
-    v' <- internedSymbol env v
-
-    if isJust o' && isJust a' && isJust v'
-      then removeWmeImpl env
-                         (Obj  (fromJust o'))
-                         (Attr (fromJust a'))
-                         (Val  (fromJust v'))
-
-      -- At least 1 of the names didn't have a corresponding interned
-      -- symbol, the wme can't exist.
-      else return False
+    o' <- internSymbol env o
+    a' <- internSymbol env a
+    v' <- internSymbol env v
+    removeWmeImpl env (Obj o') (Attr a') (Val v')
 
 instance RemoveWme Actx where
   removeWme actx = removeWme (actxEnv actx)

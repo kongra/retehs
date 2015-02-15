@@ -15,7 +15,9 @@ import           Control.Concurrent.STM (STM, TVar)
 import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Hashable (Hashable, hashWithSalt)
+import           Data.Int
 import qualified Data.Sequence as Seq
+import           Data.Word
 
 -- IDENTITY
 
@@ -40,42 +42,117 @@ hashWithId salt x = salt `hashWithSalt` getId x
 
 -- SYMBOLIC DATA
 
--- | Constant (non-variable).
-data Constant = Constant !Id !String
+-- | Type of all values that may be treated as symbolic and that are
+-- not supposed to be interned.
+data Primitive = BoolPrimitive    !Bool
+               | CharPrimitive    !Char
+               | DoublePrimitive  !Double
+               | FloatPrimitive   !Float
+               | IntPrimitive     !Int
+               | Int8Primitive    !Int8
+               | Int16Primitive   !Int16
+               | Int32Primitive   !Int32
+               | Int64Primitive   !Int64
+               | IntegerPrimitive !Integer
+               | WordPrimitive    !Word
+               | Word8Primitive   !Word8
+               | Word16Primitive  !Word16
+               | Word32Primitive  !Word32
+               | Word64Primitive  !Word64 deriving Eq
 
-instance Show Constant where
-  show (Constant _ s) = s
+instance Show Primitive where
+  show (BoolPrimitive    v) = show v
+  show (CharPrimitive    v) = show v
+  show (DoublePrimitive  v) = show v
+  show (FloatPrimitive   v) = show v
+  show (IntPrimitive     v) = show v
+  show (Int8Primitive    v) = show v
+  show (Int16Primitive   v) = show v
+  show (Int32Primitive   v) = show v
+  show (Int64Primitive   v) = show v
+  show (IntegerPrimitive v) = show v
+  show (WordPrimitive    v) = show v
+  show (Word8Primitive   v) = show v
+  show (Word16Primitive  v) = show v
+  show (Word32Primitive  v) = show v
+  show (Word64Primitive  v) = show v
   {-# INLINE show #-}
 
-instance HavingId Constant where
-  getId (Constant id' _) = id'
-  {-# INLINE getId #-}
+instance Hashable Primitive where
+  hashWithSalt salt (BoolPrimitive    v) = salt `hashWithSalt` v
+  hashWithSalt salt (CharPrimitive    v) = salt `hashWithSalt` v
+  hashWithSalt salt (DoublePrimitive  v) = salt `hashWithSalt` v
+  hashWithSalt salt (FloatPrimitive   v) = salt `hashWithSalt` v
+  hashWithSalt salt (IntPrimitive     v) = salt `hashWithSalt` v
+  hashWithSalt salt (Int8Primitive    v) = salt `hashWithSalt` v
+  hashWithSalt salt (Int16Primitive   v) = salt `hashWithSalt` v
+  hashWithSalt salt (Int32Primitive   v) = salt `hashWithSalt` v
+  hashWithSalt salt (Int64Primitive   v) = salt `hashWithSalt` v
+  hashWithSalt salt (IntegerPrimitive v) = salt `hashWithSalt` v
+  hashWithSalt salt (WordPrimitive    v) = salt `hashWithSalt` v
+  hashWithSalt salt (Word8Primitive   v) = salt `hashWithSalt` v
+  hashWithSalt salt (Word16Primitive  v) = salt `hashWithSalt` v
+  hashWithSalt salt (Word32Primitive  v) = salt `hashWithSalt` v
+  hashWithSalt salt (Word64Primitive  v) = salt `hashWithSalt` v
+  {-# INLINE hashWithSalt #-}
+
+-- | Primitive that carries on its textual representation.
+data NamedPrimitive = NamedPrimitive !Primitive !String
+
+instance Eq NamedPrimitive where
+  (NamedPrimitive p1 _) == (NamedPrimitive p2 _) = p1 == p2
+  {-# INLINE (==) #-}
+
+instance Show NamedPrimitive where
+  show (NamedPrimitive _ s) = s
+  {-# INLINE show #-}
+
+instance Hashable NamedPrimitive where
+  hashWithSalt salt (NamedPrimitive p _) = salt `hashWithSalt` p
+  {-# INLINE hashWithSalt #-}
+
+-- | Constant (non-variable).
+data Constant = StringConstant         !String !Id
+              | PrimitiveConstant      !Primitive
+              | NamedPrimitiveConstant !NamedPrimitive
+
+instance Show Constant where
+  show (StringConstant         s _)  = s
+  show (PrimitiveConstant      p  ) = show p
+  show (NamedPrimitiveConstant np ) = show np
+  {-# INLINE show #-}
 
 instance Eq Constant where
-  (==) = eqOnId
+  (StringConstant      _ id1 ) == (StringConstant      _ id2 ) = id1 == id2
+  (PrimitiveConstant      p1 ) == (PrimitiveConstant      p2 ) = p1  == p2
+  (NamedPrimitiveConstant np1) == (NamedPrimitiveConstant np2) = np1 == np2
+  _ == _ = False
   {-# INLINE (==) #-}
 
 instance Hashable Constant where
-  hashWithSalt = hashWithId
+  hashWithSalt salt (StringConstant       _ id') = salt `hashWithSalt` id'
+  hashWithSalt salt (PrimitiveConstant      p  ) = salt `hashWithSalt` p
+  hashWithSalt salt (NamedPrimitiveConstant np ) = salt `hashWithSalt` np
   {-# INLINE hashWithSalt #-}
 
 -- | Variable.
-data Variable = Variable !Id !String
+data Variable = StringVariable         !String !Id
+              | NamedPrimitiveVariable !NamedPrimitive
 
 instance Show Variable where
-  show (Variable _ s) = s
+  show (StringVariable         s _)  = s
+  show (NamedPrimitiveVariable np ) = show np
   {-# INLINE show #-}
 
-instance HavingId Variable where
-  getId (Variable id' _) = id'
-  {-# INLINE getId #-}
-
 instance Eq Variable where
-  (==) = eqOnId
+  (StringVariable      _ id1 ) == (StringVariable      _ id2 ) = id1 == id2
+  (NamedPrimitiveVariable np1) == (NamedPrimitiveVariable np2) = np1 == np2
+  _ == _ = False
   {-# INLINE (==) #-}
 
 instance Hashable Variable where
-  hashWithSalt = hashWithId
+  hashWithSalt salt (StringVariable       _ id') = salt `hashWithSalt` id'
+  hashWithSalt salt (NamedPrimitiveVariable np ) = salt `hashWithSalt` np
   {-# INLINE hashWithSalt #-}
 
 -- | Constant or Variable is a Symbol.
@@ -87,11 +164,6 @@ instance Show Symbol where
   show (Var   v) = show v
   {-# INLINE show #-}
 
-instance HavingId Symbol where
-  getId (Const c) = getId c
-  getId (Var   v) = getId v
-  {-# INLINE getId #-}
-
 instance Eq Symbol where
   (Const c1) == (Const c2) = c1 == c2
   (Var   v1) == (Var   v2) = v1 == v2
@@ -99,7 +171,8 @@ instance Eq Symbol where
   {-# INLINE (==) #-}
 
 instance Hashable Symbol where
-  hashWithSalt = hashWithId
+  hashWithSalt salt (Const c) = salt `hashWithSalt` c
+  hashWithSalt salt (Var   v) = salt `hashWithSalt` v
   {-# INLINE hashWithSalt #-}
 
 -- ENVIRONMENT
@@ -112,18 +185,18 @@ data Env =
     envIdState :: !(TVar Id)
 
     -- | Registry of (interned) Constants.
-  , envConstants:: !(TVar (Map.HashMap String Constant))
+  , envConstants :: !(TVar (Map.HashMap String Constant))
 
     -- | Registry of (interned) Variables.
-  , envVariables:: !(TVar (Map.HashMap String Variable))
+  , envVariables :: !(TVar (Map.HashMap String Variable))
 
     -- | All Wmes indexed by their WmeKey.
   , envWmes :: !(TVar (Map.HashMap WmeKey Wme))
 
     -- 3 Wme indexes by Wme Field value
-  , envWmesByObj  :: !(TVar WmesByObj)
+  , envWmesByObj  :: !(TVar WmesByObj )
   , envWmesByAttr :: !(TVar WmesByAttr)
-  , envWmesByVal  :: !(TVar WmesByVal)
+  , envWmesByVal  :: !(TVar WmesByVal )
 
     -- | Known alpha memories indexed by their WmeKey.
   , envAmems :: !(TVar (Map.HashMap WmeKey Amem))

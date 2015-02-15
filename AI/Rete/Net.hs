@@ -520,31 +520,27 @@ variableBindingsForCond s f d result = case s of
 
 -- | A value of a variable inside an action.
 data VarVal = ValidVarVal   !Symbol
-            | UnknownSymbol !String
             | ConstNotVar   !Constant
             | NoVarVal      !Variable
 
 instance Show VarVal where
   show (ValidVarVal   s ) = show s
-  show (UnknownSymbol s ) = "ERROR (1): UNKNOWN SYMBOL "   ++      s  ++ "."
-  show (ConstNotVar   c') = "ERROR (2): CONST, NOT VAR "   ++ show c' ++ "."
-  show (NoVarVal      v ) = "ERROR (3): NO VALUE FOR VAR " ++ show v  ++ "."
+  show (ConstNotVar   c') = "ERROR (1): CONST, NOT VAR "   ++ show c' ++ "."
+  show (NoVarVal      v ) = "ERROR (2): NO VALUE FOR VAR " ++ show v  ++ "."
   {-# INLINE show #-}
 
 -- | Returns a value of a variable inside an Action.
 val :: Actx -> String -> STM VarVal
 val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } s = do
-  is <- internedSymbol env s
+  is <- internSymbol env s
   case is of
-    Nothing -> return (UnknownSymbol s)
-    Just s' -> case s' of
-      Const c' -> return (ConstNotVar c')
-      Var   v  -> case Map.lookup v (prodBindings prod) of
-        Nothing             -> return (NoVarVal v)
-        Just (Location d f) -> return (ValidVarVal (fieldSymbol f wme'))
-          where
-            wme  = nthDef (error ("PANIC (6): ILLEGAL INDEX " ++ show d)) d wmes
-            wme' = fromMaybe (error "PANIC (7): wmes !! d RETURNED Nothing.") wme
+    Const c' -> return (ConstNotVar c')
+    Var   v  -> case Map.lookup v (prodBindings prod) of
+      Nothing             -> return (NoVarVal v)
+      Just (Location d f) -> return (ValidVarVal (fieldSymbol f wme'))
+        where
+          wme  = nthDef    (error ("PANIC (6): ILLEGAL INDEX " ++ show d)) d wmes
+          wme' = fromMaybe (error  "PANIC (7): wmes !! d RETURNED Nothing.") wme
 
 -- | Works like val, but raises an early error when a valid value
 -- can't be returned.
