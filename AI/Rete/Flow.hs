@@ -182,99 +182,99 @@ instance IsWildcard Symbol where
 -- | Represents a thing that may be treated as a Symbol.
 class Symbolic a where
   -- | Interns and returns a Symbol for the name argument.
-  internSymbol :: Env -> a -> STM Symbol
+  toSymbol :: Env -> a -> STM Symbol
 
 instance Symbolic Symbol where
   -- We may simply return the argument here, because Constants and
   -- Variables once interned never expire (get un-interned). Otherwise
   -- we would have to intern the argument's name.
-  internSymbol   _ = return
-  {-# INLINE internSymbol   #-}
+  toSymbol   _ = return
+  {-# INLINE toSymbol   #-}
 
 instance Symbolic Primitive where
   -- Every Primitive is treated as a Const.
-  internSymbol _ = return . Const . PrimitiveConstant
-  {-# INLINE internSymbol #-}
+  toSymbol _ = return . Const . PrimitiveConstant
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Bool where
-  internSymbol env = internSymbol env . BoolPrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . BoolPrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Char where
-  internSymbol env = internSymbol env . CharPrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . CharPrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Double where
-  internSymbol env = internSymbol env . DoublePrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . DoublePrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Float where
-  internSymbol env = internSymbol env . FloatPrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . FloatPrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Int where
-  internSymbol env = internSymbol env . IntPrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . IntPrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Int8 where
-  internSymbol env = internSymbol env . Int8Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Int8Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Int16 where
-  internSymbol env = internSymbol env . Int16Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Int16Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Int32 where
-  internSymbol env = internSymbol env . Int32Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Int32Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Int64 where
-  internSymbol env = internSymbol env . Int64Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Int64Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Integer where
-  internSymbol env = internSymbol env . IntegerPrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . IntegerPrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Word where
-  internSymbol env = internSymbol env . WordPrimitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . WordPrimitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Word8 where
-  internSymbol env = internSymbol env . Word8Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Word8Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Word16 where
-  internSymbol env = internSymbol env . Word16Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Word16Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Word32 where
-  internSymbol env = internSymbol env . Word32Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Word32Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic Word64  where
-  internSymbol env = internSymbol env . Word64Primitive
-  {-# INLINE internSymbol #-}
+  toSymbol env = toSymbol env . Word64Primitive
+  {-# INLINE toSymbol #-}
 
 instance Symbolic String where
-  internSymbol env name = case symbolName name of
+  toSymbol env name = case symbolName name of
     EmptyConst     -> return (Const emptyConstant)
     EmptyVar       -> return (Var   emptyVariable)
     OneCharConst   -> liftM  Const (internConstant env name)
     MultiCharVar   -> liftM  Var   (internVariable env name)
     MultiCharConst -> liftM  Const (internConstant env name)
-  {-# INLINE internSymbol   #-}
+  {-# INLINE toSymbol   #-}
 
 toObj :: (Symbolic o) => o -> Env -> STM Obj
-toObj o env = liftM Obj (internSymbol env o)
+toObj o env = liftM Obj (toSymbol env o)
 {-# INLINE toObj #-}
 
 toAttr :: (Symbolic a) => a -> Env -> STM Attr
-toAttr a env = liftM Attr (internSymbol env a)
+toAttr a env = liftM Attr (toSymbol env a)
 {-# INLINE toAttr #-}
 
 toVal :: (Symbolic v) => v -> Env -> STM Val
-toVal v env = liftM Val (internSymbol env v)
+toVal v env = liftM Val (toSymbol env v)
 {-# INLINE toVal #-}
 
 data SymbolName = EmptyConst
@@ -325,7 +325,7 @@ internFields env o a v = liftM3 (,,) (internField env Obj  o)
 {-# INLINE internFields #-}
 
 internField :: Symbolic a => Env -> (Symbol -> b) -> a -> STM b
-internField env f s = liftM f (internSymbol env s)
+internField env f s = liftM f (toSymbol env s)
 {-# INLINE internField #-}
 
 -- TODO: EXPLICIT CONSTRUCTORS FOR CONSTANTS AND VARIABLES
@@ -836,9 +836,9 @@ class RemoveWme e where
 
 instance RemoveWme Env where
   removeWme env o a v = do
-    o' <- internSymbol env o
-    a' <- internSymbol env a
-    v' <- internSymbol env v
+    o' <- toSymbol env o
+    a' <- toSymbol env a
+    v' <- toSymbol env v
     removeWmeImpl env (Obj o') (Attr a') (Val v')
 
 instance RemoveWme Actx where

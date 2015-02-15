@@ -532,7 +532,7 @@ instance Show VarVal where
 -- | Returns a value of a variable inside an Action.
 val :: Actx -> String -> STM VarVal
 val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } s = do
-  is <- internSymbol env s
+  is <- toSymbol env s
   case is of
     Const c' -> return (ConstNotVar c')
     Var   v  -> case Map.lookup v (prodBindings prod) of
