@@ -1,7 +1,8 @@
-{-# LANGUAGE    Trustworthy       #-}
-{-# LANGUAGE    RankNTypes        #-}
-{-# LANGUAGE    FlexibleInstances #-}
-{-# OPTIONS_GHC -W -Wall          #-}
+{-# LANGUAGE    Trustworthy           #-}
+{-# LANGUAGE    RankNTypes            #-}
+{-# LANGUAGE    FlexibleInstances     #-}
+{-# LANGUAGE    MultiParamTypeClasses #-}
+{-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Flow
@@ -164,9 +165,6 @@ genid Env { envIdState = eid } = do
 emptyConstant :: Constant
 emptyConstant =  StringConstant "" (-1)
 
-emptyVariable :: Variable
-emptyVariable =  StringVariable "?" (-2)
-
 wildcardConstant :: Constant
 wildcardConstant = StringConstant "*" (-3)
 
@@ -257,12 +255,9 @@ instance Symbolic Word64  where
   {-# INLINE toSymbol #-}
 
 instance Symbolic String where
-  toSymbol env name = case symbolName name of
-    EmptyConst     -> return (Const emptyConstant)
-    EmptyVar       -> return (Var   emptyVariable)
-    OneCharConst   -> liftM  Const (internConstant env name)
-    MultiCharVar   -> liftM  Var   (internVariable env name)
-    MultiCharConst -> liftM  Const (internConstant env name)
+  -- Raw String is always a constant.
+  toSymbol _   []   = return (Const emptyConstant)
+  toSymbol env name = liftM Const (internConstant env name)
   {-# INLINE toSymbol   #-}
 
 toObj :: (Symbolic o) => o -> Env -> STM Obj
@@ -276,22 +271,6 @@ toAttr a env = liftM Attr (toSymbol env a)
 toVal :: (Symbolic v) => v -> Env -> STM Val
 toVal v env = liftM Val (toSymbol env v)
 {-# INLINE toVal #-}
-
-data SymbolName = EmptyConst
-                | EmptyVar
-                | OneCharConst
-                | MultiCharVar
-                | MultiCharConst deriving Show
-
-symbolName :: String -> SymbolName
-symbolName "" = EmptyConst
-symbolName [c]
-  | c == '?'  = EmptyVar
-  | otherwise = OneCharConst
-symbolName (c:_:_)
-  | c == '?'  = MultiCharVar
-  | otherwise = MultiCharConst
-{-# INLINE symbolName #-}
 
 internConstant :: Env -> String -> STM Constant
 internConstant env name = do
@@ -328,7 +307,27 @@ internField :: Symbolic a => Env -> (Symbol -> b) -> a -> STM b
 internField env f s = liftM f (toSymbol env s)
 {-# INLINE internField #-}
 
--- TODO: EXPLICIT CONSTRUCTORS FOR CONSTANTS AND VARIABLES
+-- EXPLICIT CONSTRUCTORS FOR VARIABLES
+
+-- | A type with a variable semantics.
+class Varsem a where
+  -- | Marks a thing as a variable resulting in a Symbolic value.
+  var :: a -> VarIntern
+
+instance Varsem String where
+  var ""   = error "ERROR (3): EMPTY VARIABLE NAME."
+  var name = \env -> liftM Var (internVariable env name)
+  {-# INLINE var #-}
+
+instance Varsem NamedPrimitive where
+  var (NamedPrimitive _ "") = error "ERROR (4): EMPTY VARIABLE NAME."
+  var np                    = \_ -> return (Var (NamedPrimitiveVariable np))
+  {-# INLINE var #-}
+
+type VarIntern = Env -> STM Symbol
+
+instance Symbolic VarIntern where
+  toSymbol env vintern = vintern env
 
 -- ALPHA MEMORY
 
