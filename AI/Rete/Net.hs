@@ -23,12 +23,18 @@ module AI.Rete.Net
     , C
     , n
     , N
+    , noMoreConds
+    , noNegs
 
       -- * Accessing information in actions
     , val
     , valE
     , valM
     , VarVal (..)
+
+      -- * Predefined actions
+    , passAction
+    , traceAction
     )
     where
 
@@ -41,6 +47,7 @@ import qualified Data.HashMap.Strict as Map
 import qualified Data.HashSet as Set
 import           Data.Maybe (isJust, fromJust, fromMaybe)
 import qualified Data.Sequence as Seq
+import           Debug.Trace
 import           Kask.Control.Monad (whenM, forMM_, unlessM)
 import           Kask.Data.List (nthDef)
 import           Kask.Data.Sequence (removeFirstOccurence)
@@ -791,3 +798,23 @@ instance RemoveProd Env where
 instance RemoveProd Actx where
   removeProd Actx { actxEnv = env } = removeProd env
   {-# INLINE removeProd #-}
+
+-- SOME PRODUCTION CREATION CONVENIENCES
+
+-- | Symbolic representation of an empty list of C(onds).
+noMoreConds :: [C]
+noMoreConds = []
+
+-- | Symbolic representation of an empty list of N(egative conds).
+noNegs :: [N]
+noNegs = []
+
+-- PREDEFINED ACTIONS
+
+-- | An action that doesn't do anything.
+passAction :: Action
+passAction _ = return ()
+
+-- | An action that traces a predefined text on execution.
+traceAction :: String -> Action
+traceAction s _ = traceM s

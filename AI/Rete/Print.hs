@@ -986,6 +986,15 @@ adjsJoinTest :: JoinTest -> Flags -> Visited -> STM [Vn]
 adjsJoinTest _ _ _ = return []
 {-# INLINE adjsJoinTest #-}
 
+-- Env VISUALIZATION
+
+instance Vnable Env where
+  -- Currently, simply show Dtn. In future: add some report on Env.
+  toVnAdjs = toVnAdjs . envDtn
+  toVnShow = toVnShow . envDtn
+  {-# INLINE toVnShow #-}
+  {-# INLINE toVnAdjs #-}
+
 -- PRINT IMPLEMENTATION
 
 -- | Converts the selected object to a tree representation (expressed

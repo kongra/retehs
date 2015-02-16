@@ -26,8 +26,7 @@ module AI.Rete.Flow
     , fieldConstant
     , var
     , Var
-    , ToConstantOrVariable
-    , toConstantOrVariable
+    , ToConstantOrVariable (toConstantOrVariable)
 
       -- * Transactional utils
     , nullTSet
@@ -44,8 +43,7 @@ module AI.Rete.Flow
     , rightUnlink
 
       -- * Accessing Token data
-    , TokWmes
-    , tokWmes
+    , TokWmes (tokWmes)
 
       -- * Removing Tokens
     , deleteTokAndDescendents
@@ -364,12 +362,83 @@ type Var = Env -> STM Variable
 class ToConstantOrVariable a where
   toConstantOrVariable :: Env -> a -> STM ConstantOrVariable
 
-instance ToConstant a => ToConstantOrVariable a where
-  toConstantOrVariable env c = liftM JustConstant (toConstant env c)
-  {-# INLINE toConstantOrVariable #-}
-
 instance ToConstantOrVariable Var where
   toConstantOrVariable env vi = liftM JustVariable (vi env)
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Primitive where
+  -- Every Primitive is treated as a Const.
+  toConstantOrVariable _ = return . JustConstant . PrimitiveConstant
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Bool where
+  toConstantOrVariable env = toConstantOrVariable env . BoolPrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Char where
+  toConstantOrVariable env = toConstantOrVariable env . CharPrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Double where
+  toConstantOrVariable env = toConstantOrVariable env . DoublePrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Float where
+  toConstantOrVariable env = toConstantOrVariable env . FloatPrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Int where
+  toConstantOrVariable env = toConstantOrVariable env . IntPrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Int8 where
+  toConstantOrVariable env = toConstantOrVariable env . Int8Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Int16 where
+  toConstantOrVariable env = toConstantOrVariable env . Int16Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Int32 where
+  toConstantOrVariable env = toConstantOrVariable env . Int32Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Int64 where
+  toConstantOrVariable env = toConstantOrVariable env . Int64Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Integer where
+  toConstantOrVariable env = toConstantOrVariable env . IntegerPrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Word where
+  toConstantOrVariable env = toConstantOrVariable env . WordPrimitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Word8 where
+  toConstantOrVariable env = toConstantOrVariable env . Word8Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Word16 where
+  toConstantOrVariable env = toConstantOrVariable env . Word16Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Word32 where
+  toConstantOrVariable env = toConstantOrVariable env . Word32Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable Word64  where
+  toConstantOrVariable env = toConstantOrVariable env . Word64Primitive
+  {-# INLINE toConstantOrVariable #-}
+
+instance ToConstantOrVariable String where
+  -- Raw String is always a constant.
+  toConstantOrVariable _   []   = return (JustConstant emptyConstant)
+  toConstantOrVariable env name = liftM JustConstant (internConstant env name)
+  {-# INLINE toConstantOrVariable   #-}
+
+instance ToConstantOrVariable NamedPrimitive where
+  toConstantOrVariable _ = return . JustConstant . NamedPrimitiveConstant
   {-# INLINE toConstantOrVariable #-}
 
 -- ALPHA MEMORY

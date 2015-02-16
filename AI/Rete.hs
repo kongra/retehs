@@ -29,6 +29,8 @@ module AI.Rete
     , C
     , n
     , N
+    , noMoreConds
+    , noNegs
 
       -- * Adding/removing Wmes
     , addWme
@@ -47,6 +49,10 @@ module AI.Rete
     , valE
     , valM
     , VarVal         (..)
+
+      -- * Predefined actions
+    , passAction
+    , traceAction
     )
     where
 
