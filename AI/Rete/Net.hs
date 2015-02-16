@@ -12,7 +12,25 @@
 -- Stability   : experimental
 -- Portability : requires stm
 ------------------------------------------------------------------------
-module AI.Rete.Net where
+module AI.Rete.Net
+    (
+      -- * Adding/removing productions
+      addProd
+    , removeProd
+
+      -- * Conditions
+    , c
+    , C
+    , n
+    , N
+
+      -- * Accessing information in actions
+    , val
+    , valE
+    , valM
+    , VarVal (..)
+    )
+    where
 
 import           AI.Rete.Data
 import           AI.Rete.Flow
@@ -28,35 +46,17 @@ import           Kask.Data.List (nthDef)
 import           Kask.Data.Sequence (removeFirstOccurence)
 import           Safe (headMay)
 
-class IsVariable a where isVariable :: a -> Bool
-
-instance IsVariable Symbol where
-  isVariable (Var   _) = True
-  isVariable (Const _) = False
-  {-# INLINE isVariable #-}
-
-instance IsVariable Obj where
-  isVariable (Obj s)  = isVariable s
-  {-# INLINE isVariable #-}
-
-instance IsVariable Attr where
-  isVariable (Attr s) = isVariable s
-  {-# INLINE isVariable #-}
-
-instance IsVariable Val where
-  isVariable (Val s)  = isVariable s
-  {-# INLINE isVariable #-}
-
 -- AMEM CREATION
 
 -- | Searches for an existing alpha memory for the given symbols or
 -- creates a new one.
-buildOrShareAmem :: Env -> Obj -> Attr -> Val -> STM Amem
-buildOrShareAmem env o a v = do
-  let w  = Const wildcardConstant
-      o' = if isVariable o then Obj  w else o
-      a' = if isVariable a then Attr w else a
-      v' = if isVariable v then Val  w else v
+buildOrShareAmem :: Env -> Obj ConstOrVar -> Attr ConstOrVar -> Val ConstOrVar
+                 -> STM Amem
+buildOrShareAmem env (Obj o) (Attr a) (Val v) = do
+  let f s = case s of { JustConst c' -> c'; _ -> wildcardConstant }
+      o'  = Obj  (f o)
+      a'  = Attr (f a)
+      v'  = Val  (f v)
 
   amems <- readTVar (envAmems env)
   let k = WmeKey o' a' v'
@@ -92,7 +92,9 @@ buildOrShareAmem env o a v = do
 -- | A simplified, more effective version of amem activation that
 -- takes place on the amem creation. No successors activation here,
 -- cause no successors present.
-activateAmemOnCreation :: Env -> Amem -> Obj -> Attr -> Val -> STM ()
+activateAmemOnCreation :: Env -> Amem
+                       -> Obj Constant -> Attr Constant -> Val Constant
+                       -> STM ()
 activateAmemOnCreation env amem o a v = do
   byObjIndex  <- readTVar (envWmesByObj  env)
   byAttrIndex <- readTVar (envWmesByAttr env)
@@ -162,8 +164,8 @@ indexedNegConds start = zip [start ..]
 -- JOIN TESTS
 
 -- | Returns a field within the PosCond that is equal to the passed
--- Symbol.
-fieldEqualTo :: PosCond -> Symbol -> Maybe Field
+-- Constant.
+fieldEqualTo :: PosCond -> ConstOrVar -> Maybe Field
 fieldEqualTo (PosCond (Obj o) (Attr a) (Val v)) s
   | o == s    = Just O
   | a == s    = Just A
@@ -171,20 +173,21 @@ fieldEqualTo (PosCond (Obj o) (Attr a) (Val v)) s
   | otherwise = Nothing
 {-# INLINE fieldEqualTo #-}
 
-matchingLocation :: Symbol -> IndexedPosCond -> Maybe Location
+matchingLocation :: ConstOrVar -> IndexedPosCond -> Maybe Location
 matchingLocation s (i, cond) = case fieldEqualTo cond s of
   Nothing -> Nothing
   Just f  -> Just (Location i f)
 {-# INLINE matchingLocation #-}
 
-joinTestForField :: Int -> Symbol -> Field -> [IndexedPosCond] -> Maybe JoinTest
-joinTestForField i v field earlierConds
-  | isVariable v =
-    case headMay (matches earlierConds) of
-      Nothing             -> Nothing
+joinTestForField :: Int -> ConstOrVar -> Field -> [IndexedPosCond]
+                 -> Maybe JoinTest
+joinTestForField i v field earlierConds =
+  case v of
+    JustVar _ -> case headMay (matches earlierConds) of
+      Nothing              -> Nothing
       Just (Location i' f) -> Just (JoinTest field f (i - i'))
 
-  | otherwise = Nothing -- No tests from Consts (non-Vars).
+    JustConst _ -> Nothing -- No tests from Consts (non-Vars).
   where
     matches = map fromJust . filter isJust . map (matchingLocation v)
 {-# INLINE joinTestForField #-}
@@ -197,7 +200,8 @@ joinTestsForNegCond :: IndexedNegCond -> [IndexedPosCond] -> [JoinTest]
 joinTestsForNegCond (i, NegCond o a v) = joinTestsForCondImpl i o a v
 {-# INLINE joinTestsForNegCond #-}
 
-joinTestsForCondImpl :: Int -> Obj -> Attr -> Val
+joinTestsForCondImpl :: Int
+                     -> Obj ConstOrVar -> Attr ConstOrVar -> Val ConstOrVar
                      -> [IndexedPosCond] -> [JoinTest]
 joinTestsForCondImpl i (Obj o) (Attr a) (Val v) earlierConds =
   result3
@@ -379,19 +383,26 @@ buildOrShareNeg env parent amem tests = do
 type FieldMkr a = Env -> STM a
 
 -- | Positive condition.
-data C = C !(FieldMkr Obj) !(FieldMkr Attr) !(FieldMkr Val)
+data C = C !(FieldMkr (Obj  ConstOrVar))
+           !(FieldMkr (Attr ConstOrVar))
+           !(FieldMkr (Val  ConstOrVar))
 
 -- | Negative (not) condition.
-data N = N !(FieldMkr Obj) !(FieldMkr Attr) !(FieldMkr Val)
+data N = N !(FieldMkr (Obj  ConstOrVar))
+           !(FieldMkr (Attr ConstOrVar))
+           !(FieldMkr (Val  ConstOrVar))
+
+toField :: ToConstOrVar a => (ConstOrVar -> b) -> a -> Env -> STM b
+toField f v env = liftM f (toConstOrVar env v)
 
 -- | Creates a positive condition.
-c :: (Symbolic o, Symbolic a, Symbolic v) => o -> a -> v -> C
-c o a v = C (toObj o) (toAttr a) (toVal v)
+c :: (ToConstOrVar o, ToConstOrVar a, ToConstOrVar v) => o -> a -> v -> C
+c o a v = C (toField Obj o) (toField Attr a) (toField Val v)
 {-# INLINE c #-}
 
 -- | Creates a negative (not) condition.
-n :: (Symbolic o, Symbolic a, Symbolic v) => o -> a -> v -> N
-n o a v = N (toObj o) (toAttr a) (toVal v)
+n :: (ToConstOrVar o, ToConstOrVar a, ToConstOrVar v) => o -> a -> v -> N
+n o a v = N (toField Obj o) (toField Attr a) (toField Val v)
 {-# INLINE n #-}
 
 toPosCond :: Env -> C -> STM PosCond
@@ -509,52 +520,48 @@ variableBindingsForConds tokLen = loop Map.empty
         d       = tokLen - i - 1
 {-# INLINE variableBindingsForConds #-}
 
-variableBindingsForCond :: Symbol -> Field -> Int -> Bindings -> Bindings
+variableBindingsForCond :: ConstOrVar -> Field -> Int -> Bindings -> Bindings
 variableBindingsForCond s f d result = case s of
   -- For constants leave the resulting bindings untouched.
-  Const _ -> result
+  JustConst _ -> result
   -- For vars avoid overriding existing bindings.
-  Var   v -> if   Map.member v result    then result
-             else Map.insert v (Location d f) result
+  JustVar   v -> if   Map.member v result    then result
+                 else Map.insert v (Location d f) result
 {-# INLINE variableBindingsForCond #-}
 
 -- | A value of a variable inside an action.
-data VarVal = ValidVarVal   !Symbol
-            | ConstNotVar   !Constant
+data VarVal = ValidVarVal   !Constant
             | NoVarVal      !Variable
 
 instance Show VarVal where
   show (ValidVarVal   s ) = show s
-  show (ConstNotVar   c') = "ERROR (1): CONST, NOT VAR "   ++ show c' ++ "."
-  show (NoVarVal      v ) = "ERROR (2): NO VALUE FOR VAR " ++ show v  ++ "."
+  show (NoVarVal      v ) = "ERROR (1): NO VALUE FOR VAR " ++ show v  ++ "."
   {-# INLINE show #-}
 
 -- | Returns a value of a variable inside an Action.
-val :: Actx -> String -> STM VarVal
-val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } s = do
-  is <- toSymbol env s
-  case is of
-    Const c' -> return (ConstNotVar c')
-    Var   v  -> case Map.lookup v (prodBindings prod) of
-      Nothing             -> return (NoVarVal v)
-      Just (Location d f) -> return (ValidVarVal (fieldSymbol f wme'))
-        where
-          wme  = nthDef    (error ("PANIC (6): ILLEGAL INDEX " ++ show d)) d wmes
-          wme' = fromMaybe (error  "PANIC (7): wmes !! d RETURNED Nothing.") wme
+val :: Actx -> VarIntern -> STM VarVal
+val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } vi = do
+  v <- vi env
+  case Map.lookup v (prodBindings prod) of
+    Nothing             -> return (NoVarVal v)
+    Just (Location d f) -> return (ValidVarVal (fieldConstant f wme'))
+      where
+        wme  = nthDef    (error ("PANIC (6): ILLEGAL INDEX " ++ show d)) d wmes
+        wme' = fromMaybe (error  "PANIC (7): wmes !! d RETURNED Nothing.") wme
 
 -- | Works like val, but raises an early error when a valid value
 -- can't be returned.
-valE :: Actx -> String -> STM Symbol
+valE :: Actx -> VarIntern -> STM Constant
 valE actx s = do
   result <- val actx s
-  case result of { ValidVarVal v -> return v; _ -> error (show result) }
+  case result of { ValidVarVal c' -> return c'; _ -> error (show result) }
 {-# INLINE valE #-}
 
 -- | Works like valE, but returns Nothing instead of raising an error.
-valM :: Actx -> String -> STM (Maybe Symbol)
+valM :: Actx -> VarIntern -> STM (Maybe Constant)
 valM actx s = do
   result <- val actx s
-  case result of { ValidVarVal v -> return (Just v); _ -> return Nothing }
+  case result of { ValidVarVal c' -> return (Just c'); _ -> return Nothing }
 {-# INLINE valM #-}
 
 -- UPDATING NEW NODES WITH MATCHES FROM ABOVE

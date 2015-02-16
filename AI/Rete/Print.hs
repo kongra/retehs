@@ -715,19 +715,16 @@ showAmem amem flags vs = do
       (Val  v) = amemVal    amem
       alpha    = showString "A"
       repr     = if is AmemFields flags
-                   then compose [ alpha, showString " ("
-                                , sS o , showString ","
-                                , sS a , showString ","
-                                , sS v , showString ")"]
+                   then compose [ alpha   , showString " ("
+                                , shows o , showString ","
+                                , shows a , showString ","
+                                , shows v , showString ")"]
                    else alpha
   withEllipsisT (visited amem vs) $
     if is AmemRefCounts flags
       then (do rc <- readTVar (amemRefCount amem)
                return $ compose [repr, showString " rc ", shows rc])
       else return repr
-  where
-    sS s | isWildcard s = showString "*"
-         | otherwise    = showString (show s)
 {-# INLINE showAmem #-}
 
 amemAdjs :: Amem -> Flags -> Visited -> STM [Vn]

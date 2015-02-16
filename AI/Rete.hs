@@ -20,10 +20,9 @@ module AI.Rete
     , createEnv
 
       -- * Symbols
-    , Symbol
     , Constant
     , Variable
-    , Primitive (..)
+    , Primitive      (..)
     , NamedPrimitive (..)
     , var
 

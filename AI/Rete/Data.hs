@@ -1,5 +1,7 @@
-{-# LANGUAGE    Trustworthy #-}
-{-# OPTIONS_GHC -W -Wall    #-}
+{-# LANGUAGE    Trustworthy          #-}
+{-# LANGUAGE    TypeSynonymInstances #-}
+{-# LANGUAGE    FlexibleInstances    #-}
+{-# OPTIONS_GHC -W -Wall             #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Data
@@ -9,7 +11,64 @@
 -- Maintainer  : kongra@gmail.com
 -- Stability   : experimental
 ------------------------------------------------------------------------
-module AI.Rete.Data where
+module AI.Rete.Data
+    (
+      -- * Environment
+      Env              (..)
+    , Id
+
+      -- * Wmes
+    , Wme              (..)
+    , WmesIndex
+    , WmeKey           (..)
+
+      -- * Fields
+    , Obj              (..)
+    , Attr             (..)
+    , Val              (..)
+    , Field            (..)
+
+      -- * Elementary data
+    , Constant         (..)
+    , Variable         (..)
+    , ConstOrVar       (..)
+
+    , Primitive        (..)
+    , NamedPrimitive   (..)
+
+      -- * Tokens
+    , Btok             (..)
+    , Ntok             (..)
+    , Ptok             (..)
+    , WmeTok           (..)
+    , Dtt              (..)
+    , JoinTok
+    , NegJoinResult    (..)
+
+      -- * Alpha network
+    , Amem             (..)
+    , AmemSuccessor    (..)
+    , AmemSuccessorKey (..)
+
+      -- * Beta network
+    , Bmem             (..)
+    , Join             (..)
+    , JoinTest         (..)
+    , Location         (..)
+    , Neg              (..)
+    , Prod             (..)
+    , Dtn              (..)
+
+      -- * Actions
+    , Action
+    , Actx             (..)
+    , Bindings
+
+      -- * Conditions (internal form)
+    , PosCond          (..)
+    , NegCond          (..)
+    )
+    where
 
 import           Control.Concurrent.STM (STM, TVar)
 import qualified Data.HashMap.Strict as Map
@@ -155,26 +214,6 @@ instance Hashable Variable where
   hashWithSalt salt (NamedPrimitiveVariable np ) = salt `hashWithSalt` np
   {-# INLINE hashWithSalt #-}
 
--- | Constant or Variable is a Symbol.
-data Symbol = Const !Constant
-            | Var   !Variable
-
-instance Show Symbol where
-  show (Const c) = show c
-  show (Var   v) = show v
-  {-# INLINE show #-}
-
-instance Eq Symbol where
-  (Const c1) == (Const c2) = c1 == c2
-  (Var   v1) == (Var   v2) = v1 == v2
-  _          ==          _ = False
-  {-# INLINE (==) #-}
-
-instance Hashable Symbol where
-  hashWithSalt salt (Const c) = salt `hashWithSalt` c
-  hashWithSalt salt (Var   v) = salt `hashWithSalt` v
-  {-# INLINE hashWithSalt #-}
-
 -- ENVIRONMENT
 
 -- | Environment. Contains a global context for running Rete.
@@ -211,35 +250,35 @@ data Env =
 -- FIELDS AND THEIR VALUES
 
 -- | Object (Constant or Variable).
-newtype Obj = Obj Symbol deriving Eq
+newtype Obj a = Obj a deriving Eq
 
-instance Show Obj where
+instance Show a => Show (Obj a) where
   show (Obj s) = show s
   {-# INLINE show #-}
 
-instance Hashable Obj where
+instance Hashable a => Hashable (Obj a) where
   hashWithSalt salt (Obj s) = salt `hashWithSalt` s
   {-# INLINE hashWithSalt #-}
 
 -- | Attribute (Constant or Variable).
-newtype Attr = Attr Symbol deriving Eq
+newtype Attr a = Attr a deriving Eq
 
-instance Show Attr where
+instance Show a => Show (Attr a) where
   show (Attr s) = show s
   {-# INLINE show #-}
 
-instance Hashable Attr where
+instance Hashable a => Hashable (Attr a) where
   hashWithSalt salt (Attr s) = salt `hashWithSalt` s
   {-# INLINE hashWithSalt #-}
 
 -- | Value (Constant or Variable).
-newtype Val = Val Symbol deriving Eq
+newtype Val a = Val a deriving Eq
 
-instance Show Val where
+instance Show a => Show (Val a) where
   show (Val s) = show s
   {-# INLINE show #-}
 
-instance Hashable Val where
+instance Hashable a => Hashable (Val a) where
   hashWithSalt salt (Val s) = salt `hashWithSalt` s
   {-# INLINE hashWithSalt #-}
 
@@ -256,10 +295,10 @@ instance Hashable Field where
 
 -- WMES
 
-type WmesIndex a       = Map.HashMap a (Set.HashSet Wme)
-type WmesByObj         = WmesIndex Obj
-type WmesByAttr        = WmesIndex Attr
-type WmesByVal         = WmesIndex Val
+type WmesIndex a = Map.HashMap a (Set.HashSet Wme     )
+type WmesByObj   = WmesIndex     (Obj         Constant)
+type WmesByAttr  = WmesIndex     (Attr        Constant)
+type WmesByVal   = WmesIndex     (Val         Constant)
 
 -- | Working Memory Element (fact).
 data Wme =
@@ -267,9 +306,9 @@ data Wme =
   {
     wmeId :: !Id
 
-  , wmeObj  :: !Obj
-  , wmeAttr :: !Attr
-  , wmeVal  :: !Val
+  , wmeObj  :: !(Obj  Constant)
+  , wmeAttr :: !(Attr Constant)
+  , wmeVal  :: !(Val  Constant)
 
     -- | Amems this Wme belongs to (8 at most).
   , wmeAmems :: !(TVar [Amem])
@@ -299,7 +338,7 @@ instance Hashable Wme where
   {-# INLINE hashWithSalt #-}
 
 -- | Key for a Wme.
-data WmeKey = WmeKey !Obj !Attr !Val deriving Eq
+data WmeKey = WmeKey !(Obj Constant) !(Attr Constant) !(Val Constant) deriving Eq
 
 instance Hashable WmeKey where
   hashWithSalt salt (WmeKey obj attr val) =
@@ -426,9 +465,9 @@ data Amem =
   , amemWmesByVal  :: !(TVar WmesByVal)
 
     -- Keys to identify the α memory in the α memories registry.
-  , amemObj  :: !Obj
-  , amemAttr :: !Attr
-  , amemVal  :: !Val
+  , amemObj  :: !(Obj  Constant)
+  , amemAttr :: !(Attr Constant)
+  , amemVal  :: !(Val  Constant)
   }
 
 instance Eq Amem where
@@ -613,13 +652,26 @@ type Action = Actx -> STM ()
 
 -- CONDITIONS
 
-data PosCond = PosCond !Obj !Attr !Val
+data ConstOrVar = JustConst !Constant
+                | JustVar   !Variable deriving Eq
+
+instance Show ConstOrVar where
+  show (JustConst c) = show c
+  show (JustVar   v) = show v
+  {-# INLINE show #-}
+
+instance Hashable ConstOrVar where
+  hashWithSalt salt (JustConst c) = salt `hashWithSalt` c
+  hashWithSalt salt (JustVar   v) = salt `hashWithSalt` v
+  {-# INLINE hashWithSalt #-}
+
+data PosCond = PosCond !(Obj ConstOrVar) !(Attr ConstOrVar) !(Val ConstOrVar)
 
 instance Show PosCond where
   show (PosCond o a v) = show o ++ " " ++ show a ++ " " ++ show v
   {-# INLINE show #-}
 
-data NegCond = NegCond !Obj !Attr !Val
+data NegCond = NegCond !(Obj ConstOrVar) !(Attr ConstOrVar) !(Val ConstOrVar)
 
 instance Show NegCond where
   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v

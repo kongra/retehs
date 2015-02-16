@@ -2,6 +2,7 @@
 {-# LANGUAGE    RankNTypes            #-}
 {-# LANGUAGE    FlexibleInstances     #-}
 {-# LANGUAGE    MultiParamTypeClasses #-}
+{-# LANGUAGE    UndecidableInstances  #-}
 {-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
@@ -13,7 +14,52 @@
 -- Stability   : experimental
 -- Portability : requires stm
 ------------------------------------------------------------------------
-module AI.Rete.Flow where
+module AI.Rete.Flow
+    (
+      -- * Env operations
+      genid
+    , createEnv
+    , wmesIndexInsert
+
+      -- * Symbols and ops.
+    , wildcardConstant
+    , fieldConstant
+    , var
+    , VarIntern
+    , ToConstOrVar
+    , toConstOrVar
+
+      -- * Transactional utils
+    , nullTSet
+    , toListT
+
+      -- * Adding/removing Wmes
+    , addWme
+    , removeWme
+
+      -- * Activation and U/L
+    , leftActivateNeg
+    , leftActivateProd
+    , rightActivateJoin
+    , rightUnlink
+
+      -- * Accessing Token data
+    , TokWmes
+    , tokWmes
+
+      -- * Removing Tokens
+    , deleteTokAndDescendents
+    , TokTokPolicy  (..)
+    , TokWmePolicy  (..)
+    , TokNodePolicy (..)
+
+      -- * Accessing node children
+    , joinChildren
+    , nullJoinChildren
+    , negChildren
+    , nullNegChildren
+    )
+    where
 
 import           AI.Rete.Data
 import           Control.Concurrent.STM
@@ -43,9 +89,9 @@ toListT :: Foldable f => TVar (f a) -> STM [a]
 toListT = toListM . readTVar
 {-# INLINE toListT #-}
 
-toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
-toTSeqFront s = modifyTVar' s . (Seq.<|)
-{-# INLINE toTSeqFront #-}
+-- toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
+-- toTSeqFront s = modifyTVar' s . (Seq.<|)
+-- {-# INLINE toTSeqFront #-}
 
 toTSeqEnd :: TVar (Seq.Seq a) -> a -> STM ()
 toTSeqEnd s x = modifyTVar' s (Seq.|> x)
@@ -112,7 +158,7 @@ feedEnvIndexes
           , wmeAttr       = a
           , wmeVal        = v } = do
 
-    let w = Const wildcardConstant
+    let w = wildcardConstant
 
     modifyTVar' byObj  (wmesIndexInsert o        wme)
     modifyTVar' byObj  (wmesIndexInsert (Obj w)  wme)
@@ -133,7 +179,7 @@ deleteFromEnvIndexes
           , wmeAttr       = a
           , wmeVal        = v } = do
 
-    let w = Const wildcardConstant
+    let w = wildcardConstant
 
     modifyTVar' byObj  (wmesIndexDelete o        wme)
     modifyTVar' byObj  (wmesIndexDelete (Obj w)  wme)
@@ -168,109 +214,89 @@ emptyConstant =  StringConstant "" (-1)
 wildcardConstant :: Constant
 wildcardConstant = StringConstant "*" (-3)
 
-class IsWildcard a where isWildcard :: a -> Bool
-
-instance IsWildcard Symbol where
-  isWildcard (Const c) = c == wildcardConstant
-  isWildcard (Var   _) = False
-  {-# INLINE isWildcard #-}
-
 -- INTERNING CONSTANTS AND VARIABLES
 
--- | Represents a thing that may be treated as a Symbol.
-class Symbolic a where
+-- | Represents a constant at the system level.
+class ToConstant a where
   -- | Interns and returns a Symbol for the name argument.
-  toSymbol :: Env -> a -> STM Symbol
+  toConstant :: Env -> a -> STM Constant
 
-instance Symbolic Symbol where
-  -- We may simply return the argument here, because Constants and
-  -- Variables once interned never expire (get un-interned). Otherwise
-  -- we would have to intern the argument's name.
-  toSymbol   _ = return
-  {-# INLINE toSymbol   #-}
+instance ToConstant Constant where
+  -- We may simply return the argument here, because Constants once
+  -- interned never expire (get un-interned).
+  toConstant   _ = return
+  {-# INLINE toConstant   #-}
 
-instance Symbolic Primitive where
+instance ToConstant Primitive where
   -- Every Primitive is treated as a Const.
-  toSymbol _ = return . Const . PrimitiveConstant
-  {-# INLINE toSymbol #-}
+  toConstant _ = return . PrimitiveConstant
+  {-# INLINE toConstant #-}
 
-instance Symbolic Bool where
-  toSymbol env = toSymbol env . BoolPrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Bool where
+  toConstant env = toConstant env . BoolPrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Char where
-  toSymbol env = toSymbol env . CharPrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Char where
+  toConstant env = toConstant env . CharPrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Double where
-  toSymbol env = toSymbol env . DoublePrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Double where
+  toConstant env = toConstant env . DoublePrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Float where
-  toSymbol env = toSymbol env . FloatPrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Float where
+  toConstant env = toConstant env . FloatPrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Int where
-  toSymbol env = toSymbol env . IntPrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Int where
+  toConstant env = toConstant env . IntPrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Int8 where
-  toSymbol env = toSymbol env . Int8Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Int8 where
+  toConstant env = toConstant env . Int8Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Int16 where
-  toSymbol env = toSymbol env . Int16Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Int16 where
+  toConstant env = toConstant env . Int16Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Int32 where
-  toSymbol env = toSymbol env . Int32Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Int32 where
+  toConstant env = toConstant env . Int32Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Int64 where
-  toSymbol env = toSymbol env . Int64Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Int64 where
+  toConstant env = toConstant env . Int64Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Integer where
-  toSymbol env = toSymbol env . IntegerPrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Integer where
+  toConstant env = toConstant env . IntegerPrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Word where
-  toSymbol env = toSymbol env . WordPrimitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Word where
+  toConstant env = toConstant env . WordPrimitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Word8 where
-  toSymbol env = toSymbol env . Word8Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Word8 where
+  toConstant env = toConstant env . Word8Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Word16 where
-  toSymbol env = toSymbol env . Word16Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Word16 where
+  toConstant env = toConstant env . Word16Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Word32 where
-  toSymbol env = toSymbol env . Word32Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Word32 where
+  toConstant env = toConstant env . Word32Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic Word64  where
-  toSymbol env = toSymbol env . Word64Primitive
-  {-# INLINE toSymbol #-}
+instance ToConstant Word64  where
+  toConstant env = toConstant env . Word64Primitive
+  {-# INLINE toConstant #-}
 
-instance Symbolic String where
+instance ToConstant String where
   -- Raw String is always a constant.
-  toSymbol _   []   = return (Const emptyConstant)
-  toSymbol env name = liftM Const (internConstant env name)
-  {-# INLINE toSymbol   #-}
-
-toObj :: (Symbolic o) => o -> Env -> STM Obj
-toObj o env = liftM Obj (toSymbol env o)
-{-# INLINE toObj #-}
-
-toAttr :: (Symbolic a) => a -> Env -> STM Attr
-toAttr a env = liftM Attr (toSymbol env a)
-{-# INLINE toAttr #-}
-
-toVal :: (Symbolic v) => v -> Env -> STM Val
-toVal v env = liftM Val (toSymbol env v)
-{-# INLINE toVal #-}
+  toConstant _   []   = return emptyConstant
+  toConstant env name = internConstant env name
+  {-# INLINE toConstant   #-}
 
 internConstant :: Env -> String -> STM Constant
 internConstant env name = do
@@ -296,38 +322,51 @@ internVariable env name = do
       return v
 {-# INLINE internVariable #-}
 
-internFields :: (Symbolic o, Symbolic a, Symbolic v)
-             => Env -> o -> a -> v -> STM (Obj, Attr, Val)
+internFields :: (ToConstant o, ToConstant a, ToConstant v)
+             => Env -> o -> a -> v
+             -> STM (Obj Constant, Attr Constant, Val Constant)
 internFields env o a v = liftM3 (,,) (internField env Obj  o)
                                      (internField env Attr a)
                                      (internField env Val  v)
 {-# INLINE internFields #-}
 
-internField :: Symbolic a => Env -> (Symbol -> b) -> a -> STM b
-internField env f s = liftM f (toSymbol env s)
+internField :: ToConstant a => Env -> (Constant -> b) -> a -> STM b
+internField env f s = liftM f (toConstant env s)
 {-# INLINE internField #-}
 
 -- EXPLICIT CONSTRUCTORS FOR VARIABLES
 
--- | A type with a variable semantics.
-class Varsem a where
+-- | A type of values with a variable semantics.
+class Var a where
   -- | Marks a thing as a variable resulting in a Symbolic value.
   var :: a -> VarIntern
 
-instance Varsem String where
+instance Var String where
   var ""   = error "ERROR (3): EMPTY VARIABLE NAME."
-  var name = \env -> liftM Var (internVariable env name)
+  var name = (`internVariable` name)
   {-# INLINE var #-}
 
-instance Varsem NamedPrimitive where
+instance Var NamedPrimitive where
   var (NamedPrimitive _ "") = error "ERROR (4): EMPTY VARIABLE NAME."
-  var np                    = \_ -> return (Var (NamedPrimitiveVariable np))
+  var np                    = \_ -> return (NamedPrimitiveVariable np)
   {-# INLINE var #-}
 
-type VarIntern = Env -> STM Symbol
+instance Var VarIntern where
+  var = id
+  {-# INLINE var #-}
 
-instance Symbolic VarIntern where
-  toSymbol env vintern = vintern env
+type VarIntern = Env -> STM Variable
+
+class ToConstOrVar a where
+  toConstOrVar :: Env -> a -> STM ConstOrVar
+
+instance ToConstant a => ToConstOrVar a where
+  toConstOrVar env c = liftM JustConst (toConstant env c)
+  {-# INLINE toConstOrVar #-}
+
+instance ToConstOrVar VarIntern where
+  toConstOrVar env vi = liftM JustVar (vi env)
+  {-# INLINE toConstOrVar #-}
 
 -- ALPHA MEMORY
 
@@ -353,7 +392,7 @@ activateAmem env amem wme = do
 class AddWme e where
   -- | Adds a new fact represented by three fields and returns its Wme.
   -- When a Wme already exists in the system, does and returns Nothing.
-  addWme :: (Symbolic a, Symbolic b, Symbolic c)
+  addWme :: (ToConstant a, ToConstant b, ToConstant c)
          => e -> a -> b -> c -> STM (Maybe Wme)
 
 instance AddWme Env where
@@ -381,7 +420,7 @@ instance AddWme Actx where
   {-# INLINE addWme #-}
 
 -- | Creates an empty Wme.
-createWme :: Env -> Obj -> Attr -> Val -> STM Wme
+createWme :: Env -> Obj Constant -> Attr Constant -> Val Constant -> STM Wme
 createWme env o a v = do
   id'       <- genid env
   amems     <- newTVar []
@@ -406,9 +445,10 @@ feedAmem env amems wme k = case Map.lookup k amems of
 {-# INLINE feedAmem #-}
 
 -- | Feeds proper Amems with a Wme.
-feedAmems :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
+feedAmems :: Env -> Wme
+          -> Obj Constant -> Attr Constant -> Val Constant -> STM ()
 feedAmems env wme o a v = do
-  let w = Const wildcardConstant
+  let w = wildcardConstant
   amems <- readTVar (envAmems env)
 
   feedAmem env amems wme $! WmeKey o       a        v
@@ -503,18 +543,18 @@ performJoinTests tests tok wme = all (passJoinTest (tokWmes tok) wme) tests
 passJoinTest :: [Maybe Wme] -> Wme -> JoinTest -> Bool
 passJoinTest wmes wme
   JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
-    fieldSymbol f1 wme == fieldSymbol f2 wme2'
+    fieldConstant f1 wme == fieldConstant f2 wme2'
     where
       wme2  = nthDef    (error ("PANIC (2): ILLEGAL INDEX " ++ show d)) d wmes
       wme2' = fromMaybe (error  "PANIC (3): wmes !! d RETURNED Nothing.") wme2
 {-# INLINE passJoinTest #-}
 
 -- | Returns a value of a Field in Wme.
-fieldSymbol :: Field -> Wme -> Symbol
-fieldSymbol O Wme { wmeObj  = Obj  s } = s
-fieldSymbol A Wme { wmeAttr = Attr s } = s
-fieldSymbol V Wme { wmeVal  = Val  s } = s
-{-# INLINE fieldSymbol #-}
+fieldConstant :: Field -> Wme -> Constant
+fieldConstant O Wme { wmeObj  = Obj  s } = s
+fieldConstant A Wme { wmeAttr = Attr s } = s
+fieldConstant V Wme { wmeVal  = Val  s } = s
+{-# INLINE fieldConstant #-}
 
 -- INDEXED JOIN
 
@@ -537,7 +577,7 @@ amemWmesForTest wmes amem
     where
       wme   = nthDef    (error ("PANIC (4): ILLEGAL INDEX " ++ show d)) d wmes
       wme'  = fromMaybe (error  "PANIC (5): wmes !! d RETURNED Nothing.") wme
-      value = fieldSymbol f2 wme'
+      value = fieldConstant f2 wme'
 {-# INLINE amemWmesForTest #-}
 
 amemWmesForIndex :: (Hashable a, Eq a) =>
@@ -828,23 +868,23 @@ nodeAmem = successorProp joinAmem negAmem
 -- REMOVING WMES
 
 class RemoveWme e where
-  -- | Removes the fact described by 3 symbols. Returns True on success
+  -- | Removes the fact described by 3 constants. Returns True on success
   -- and False when the fact was not present in the system.
-  removeWme :: (Symbolic a, Symbolic b, Symbolic c)
+  removeWme :: (ToConstant a, ToConstant b, ToConstant c)
             => e -> a -> b -> c -> STM Bool
 
 instance RemoveWme Env where
   removeWme env o a v = do
-    o' <- toSymbol env o
-    a' <- toSymbol env a
-    v' <- toSymbol env v
+    o' <- toConstant env o
+    a' <- toConstant env a
+    v' <- toConstant env v
     removeWmeImpl env (Obj o') (Attr a') (Val v')
 
 instance RemoveWme Actx where
   removeWme actx = removeWme (actxEnv actx)
   {-# INLINE removeWme #-}
 
-removeWmeImpl :: Env -> Obj -> Attr -> Val -> STM Bool
+removeWmeImpl :: Env -> Obj Constant -> Attr Constant -> Val Constant -> STM Bool
 removeWmeImpl env o a v = do
   wmes <- readTVar (envWmes env)
   let k = WmeKey o a v
@@ -859,7 +899,8 @@ removeWmeImpl env o a v = do
       return True
 {-# INLINE removeWmeImpl #-}
 
-propagateWmeRemoval :: Env -> Wme -> Obj -> Attr -> Val -> STM ()
+propagateWmeRemoval :: Env -> Wme -> Obj Constant -> Attr Constant -> Val Constant
+                    -> STM ()
 propagateWmeRemoval env wme o a v = do
   -- For every amem this wme belongs to ...
   forMM_ (readTVar (wmeAmems wme)) $ \amem -> do
