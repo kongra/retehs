@@ -14,59 +14,59 @@
 module AI.Rete.Data
     (
       -- * Environment
-      Env              (..)
+      Env                (..)
     , Id
 
       -- * Wmes
-    , Wme              (..)
+    , Wme                (..)
     , WmesIndex
-    , WmeKey           (..)
+    , WmeKey             (..)
 
       -- * Fields
-    , Obj              (..)
-    , Attr             (..)
-    , Val              (..)
-    , Field            (..)
+    , Obj                (..)
+    , Attr               (..)
+    , Val                (..)
+    , Field              (..)
 
       -- * Elementary data
-    , Constant         (..)
-    , Variable         (..)
-    , ConstOrVar       (..)
+    , Constant           (..)
+    , Variable           (..)
+    , ConstantOrVariable (..)
 
-    , Primitive        (..)
-    , NamedPrimitive   (..)
+    , Primitive          (..)
+    , NamedPrimitive     (..)
 
       -- * Tokens
-    , Btok             (..)
-    , Ntok             (..)
-    , Ptok             (..)
-    , WmeTok           (..)
-    , Dtt              (..)
+    , Btok               (..)
+    , Ntok               (..)
+    , Ptok               (..)
+    , WmeTok             (..)
+    , Dtt                (..)
     , JoinTok
-    , NegJoinResult    (..)
+    , NegJoinResult      (..)
 
       -- * Alpha network
-    , Amem             (..)
-    , AmemSuccessor    (..)
-    , AmemSuccessorKey (..)
+    , Amem               (..)
+    , AmemSuccessor      (..)
+    , AmemSuccessorKey   (..)
 
       -- * Beta network
-    , Bmem             (..)
-    , Join             (..)
-    , JoinTest         (..)
-    , Location         (..)
-    , Neg              (..)
-    , Prod             (..)
-    , Dtn              (..)
+    , Bmem               (..)
+    , Join               (..)
+    , JoinTest           (..)
+    , Location           (..)
+    , Neg                (..)
+    , Prod               (..)
+    , Dtn                (..)
 
       -- * Actions
     , Action
-    , Actx             (..)
+    , Actx               (..)
     , Bindings
 
       -- * Conditions (internal form)
-    , PosCond          (..)
-    , NegCond          (..)
+    , PosCond            (..)
+    , NegCond            (..)
     )
     where
 
@@ -652,26 +652,30 @@ type Action = Actx -> STM ()
 
 -- CONDITIONS
 
-data ConstOrVar = JustConst !Constant
-                | JustVar   !Variable deriving Eq
+data ConstantOrVariable = JustConstant !Constant
+                        | JustVariable !Variable deriving Eq
 
-instance Show ConstOrVar where
-  show (JustConst c) = show c
-  show (JustVar   v) = show v
+instance Show ConstantOrVariable where
+  show (JustConstant c) = show c
+  show (JustVariable v) = show v
   {-# INLINE show #-}
 
-instance Hashable ConstOrVar where
-  hashWithSalt salt (JustConst c) = salt `hashWithSalt` c
-  hashWithSalt salt (JustVar   v) = salt `hashWithSalt` v
+instance Hashable ConstantOrVariable where
+  hashWithSalt salt (JustConstant c) = salt `hashWithSalt` c
+  hashWithSalt salt (JustVariable v) = salt `hashWithSalt` v
   {-# INLINE hashWithSalt #-}
 
-data PosCond = PosCond !(Obj ConstOrVar) !(Attr ConstOrVar) !(Val ConstOrVar)
+data PosCond = PosCond !(Obj  ConstantOrVariable)
+                       !(Attr ConstantOrVariable)
+                       !(Val  ConstantOrVariable)
 
 instance Show PosCond where
   show (PosCond o a v) = show o ++ " " ++ show a ++ " " ++ show v
   {-# INLINE show #-}
 
-data NegCond = NegCond !(Obj ConstOrVar) !(Attr ConstOrVar) !(Val ConstOrVar)
+data NegCond = NegCond !(Obj  ConstantOrVariable)
+                       !(Attr ConstantOrVariable)
+                       !(Val  ConstantOrVariable)
 
 instance Show NegCond where
   show (NegCond o a v) = "¬ " ++ show o ++ " " ++ show a ++ " " ++ show v

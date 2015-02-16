@@ -25,9 +25,9 @@ module AI.Rete.Flow
     , wildcardConstant
     , fieldConstant
     , var
-    , VarIntern
-    , ToConstOrVar
-    , toConstOrVar
+    , Var
+    , ToConstantOrVariable
+    , toConstantOrVariable
 
       -- * Transactional utils
     , nullTSet
@@ -341,36 +341,36 @@ internField env f s = liftM f (toConstant env s)
 -- EXPLICIT CONSTRUCTORS FOR VARIABLES
 
 -- | A type of values with a variable semantics.
-class Var a where
+class ToVar a where
   -- | Marks a thing as a variable resulting in a Symbolic value.
-  var :: a -> VarIntern
+  var :: a -> Var
 
-instance Var String where
+instance ToVar String where
   var ""   = error "ERROR (3): EMPTY VARIABLE NAME."
   var name = (`internVariable` name)
   {-# INLINE var #-}
 
-instance Var NamedPrimitive where
+instance ToVar NamedPrimitive where
   var (NamedPrimitive _ "") = error "ERROR (4): EMPTY VARIABLE NAME."
   var np                    = \_ -> return (NamedPrimitiveVariable np)
   {-# INLINE var #-}
 
-instance Var VarIntern where
+instance ToVar Var where
   var = id
   {-# INLINE var #-}
 
-type VarIntern = Env -> STM Variable
+type Var = Env -> STM Variable
 
-class ToConstOrVar a where
-  toConstOrVar :: Env -> a -> STM ConstOrVar
+class ToConstantOrVariable a where
+  toConstantOrVariable :: Env -> a -> STM ConstantOrVariable
 
-instance ToConstant a => ToConstOrVar a where
-  toConstOrVar env c = liftM JustConst (toConstant env c)
-  {-# INLINE toConstOrVar #-}
+instance ToConstant a => ToConstantOrVariable a where
+  toConstantOrVariable env c = liftM JustConstant (toConstant env c)
+  {-# INLINE toConstantOrVariable #-}
 
-instance ToConstOrVar VarIntern where
-  toConstOrVar env vi = liftM JustVar (vi env)
-  {-# INLINE toConstOrVar #-}
+instance ToConstantOrVariable Var where
+  toConstantOrVariable env vi = liftM JustVariable (vi env)
+  {-# INLINE toConstantOrVariable #-}
 
 -- ALPHA MEMORY
 

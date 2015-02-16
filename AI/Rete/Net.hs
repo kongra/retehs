@@ -50,10 +50,13 @@ import           Safe (headMay)
 
 -- | Searches for an existing alpha memory for the given symbols or
 -- creates a new one.
-buildOrShareAmem :: Env -> Obj ConstOrVar -> Attr ConstOrVar -> Val ConstOrVar
-                 -> STM Amem
+buildOrShareAmem :: Env
+                 -> Obj  ConstantOrVariable
+                 -> Attr ConstantOrVariable
+                 -> Val  ConstantOrVariable
+                 -> STM  Amem
 buildOrShareAmem env (Obj o) (Attr a) (Val v) = do
-  let f s = case s of { JustConst c' -> c'; _ -> wildcardConstant }
+  let f s = case s of { JustConstant c' -> c'; _ -> wildcardConstant }
       o'  = Obj  (f o)
       a'  = Attr (f a)
       v'  = Val  (f v)
@@ -92,8 +95,11 @@ buildOrShareAmem env (Obj o) (Attr a) (Val v) = do
 -- | A simplified, more effective version of amem activation that
 -- takes place on the amem creation. No successors activation here,
 -- cause no successors present.
-activateAmemOnCreation :: Env -> Amem
-                       -> Obj Constant -> Attr Constant -> Val Constant
+activateAmemOnCreation :: Env
+                       -> Amem
+                       -> Obj  Constant
+                       -> Attr Constant
+                       -> Val  Constant
                        -> STM ()
 activateAmemOnCreation env amem o a v = do
   byObjIndex  <- readTVar (envWmesByObj  env)
@@ -165,7 +171,7 @@ indexedNegConds start = zip [start ..]
 
 -- | Returns a field within the PosCond that is equal to the passed
 -- Constant.
-fieldEqualTo :: PosCond -> ConstOrVar -> Maybe Field
+fieldEqualTo :: PosCond -> ConstantOrVariable -> Maybe Field
 fieldEqualTo (PosCond (Obj o) (Attr a) (Val v)) s
   | o == s    = Just O
   | a == s    = Just A
@@ -173,21 +179,21 @@ fieldEqualTo (PosCond (Obj o) (Attr a) (Val v)) s
   | otherwise = Nothing
 {-# INLINE fieldEqualTo #-}
 
-matchingLocation :: ConstOrVar -> IndexedPosCond -> Maybe Location
+matchingLocation :: ConstantOrVariable -> IndexedPosCond -> Maybe Location
 matchingLocation s (i, cond) = case fieldEqualTo cond s of
   Nothing -> Nothing
   Just f  -> Just (Location i f)
 {-# INLINE matchingLocation #-}
 
-joinTestForField :: Int -> ConstOrVar -> Field -> [IndexedPosCond]
+joinTestForField :: Int -> ConstantOrVariable -> Field -> [IndexedPosCond]
                  -> Maybe JoinTest
 joinTestForField i v field earlierConds =
   case v of
-    JustVar _ -> case headMay (matches earlierConds) of
+    JustVariable _ -> case headMay (matches earlierConds) of
       Nothing              -> Nothing
       Just (Location i' f) -> Just (JoinTest field f (i - i'))
 
-    JustConst _ -> Nothing -- No tests from Consts (non-Vars).
+    JustConstant _ -> Nothing -- No tests from Consts (non-Vars).
   where
     matches = map fromJust . filter isJust . map (matchingLocation v)
 {-# INLINE joinTestForField #-}
@@ -201,7 +207,9 @@ joinTestsForNegCond (i, NegCond o a v) = joinTestsForCondImpl i o a v
 {-# INLINE joinTestsForNegCond #-}
 
 joinTestsForCondImpl :: Int
-                     -> Obj ConstOrVar -> Attr ConstOrVar -> Val ConstOrVar
+                     -> Obj  ConstantOrVariable
+                     -> Attr ConstantOrVariable
+                     -> Val  ConstantOrVariable
                      -> [IndexedPosCond] -> [JoinTest]
 joinTestsForCondImpl i (Obj o) (Attr a) (Val v) earlierConds =
   result3
@@ -383,25 +391,28 @@ buildOrShareNeg env parent amem tests = do
 type FieldMkr a = Env -> STM a
 
 -- | Positive condition.
-data C = C !(FieldMkr (Obj  ConstOrVar))
-           !(FieldMkr (Attr ConstOrVar))
-           !(FieldMkr (Val  ConstOrVar))
+data C = C !(FieldMkr (Obj  ConstantOrVariable))
+           !(FieldMkr (Attr ConstantOrVariable))
+           !(FieldMkr (Val  ConstantOrVariable))
 
 -- | Negative (not) condition.
-data N = N !(FieldMkr (Obj  ConstOrVar))
-           !(FieldMkr (Attr ConstOrVar))
-           !(FieldMkr (Val  ConstOrVar))
+data N = N !(FieldMkr (Obj  ConstantOrVariable))
+           !(FieldMkr (Attr ConstantOrVariable))
+           !(FieldMkr (Val  ConstantOrVariable))
 
-toField :: ToConstOrVar a => (ConstOrVar -> b) -> a -> Env -> STM b
-toField f v env = liftM f (toConstOrVar env v)
+toField :: ToConstantOrVariable a
+        => (ConstantOrVariable -> b) -> a -> Env -> STM b
+toField f v env = liftM f (toConstantOrVariable env v)
 
 -- | Creates a positive condition.
-c :: (ToConstOrVar o, ToConstOrVar a, ToConstOrVar v) => o -> a -> v -> C
+c :: (ToConstantOrVariable o, ToConstantOrVariable a, ToConstantOrVariable v)
+  => o -> a -> v -> C
 c o a v = C (toField Obj o) (toField Attr a) (toField Val v)
 {-# INLINE c #-}
 
 -- | Creates a negative (not) condition.
-n :: (ToConstOrVar o, ToConstOrVar a, ToConstOrVar v) => o -> a -> v -> N
+n :: (ToConstantOrVariable o, ToConstantOrVariable a, ToConstantOrVariable v)
+  => o -> a -> v -> N
 n o a v = N (toField Obj o) (toField Attr a) (toField Val v)
 {-# INLINE n #-}
 
@@ -520,13 +531,14 @@ variableBindingsForConds tokLen = loop Map.empty
         d       = tokLen - i - 1
 {-# INLINE variableBindingsForConds #-}
 
-variableBindingsForCond :: ConstOrVar -> Field -> Int -> Bindings -> Bindings
+variableBindingsForCond :: ConstantOrVariable -> Field -> Int -> Bindings
+                        -> Bindings
 variableBindingsForCond s f d result = case s of
   -- For constants leave the resulting bindings untouched.
-  JustConst _ -> result
+  JustConstant _ -> result
   -- For vars avoid overriding existing bindings.
-  JustVar   v -> if   Map.member v result    then result
-                 else Map.insert v (Location d f) result
+  JustVariable v -> if   Map.member v result    then result
+                    else Map.insert v (Location d f) result
 {-# INLINE variableBindingsForCond #-}
 
 -- | A value of a variable inside an action.
@@ -539,7 +551,7 @@ instance Show VarVal where
   {-# INLINE show #-}
 
 -- | Returns a value of a variable inside an Action.
-val :: Actx -> VarIntern -> STM VarVal
+val :: Actx -> Var -> STM VarVal
 val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } vi = do
   v <- vi env
   case Map.lookup v (prodBindings prod) of
@@ -551,14 +563,14 @@ val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } vi = do
 
 -- | Works like val, but raises an early error when a valid value
 -- can't be returned.
-valE :: Actx -> VarIntern -> STM Constant
+valE :: Actx -> Var -> STM Constant
 valE actx s = do
   result <- val actx s
   case result of { ValidVarVal c' -> return c'; _ -> error (show result) }
 {-# INLINE valE #-}
 
 -- | Works like valE, but returns Nothing instead of raising an error.
-valM :: Actx -> VarIntern -> STM (Maybe Constant)
+valM :: Actx -> Var -> STM (Maybe Constant)
 valM actx s = do
   result <- val actx s
   case result of { ValidVarVal c' -> return (Just c'); _ -> return Nothing }
