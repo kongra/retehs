@@ -298,6 +298,10 @@ instance ToConstant String where
   toConstant env name = internConstant env name
   {-# INLINE toConstant   #-}
 
+instance ToConstant NamedPrimitive where
+  toConstant _ = return . NamedPrimitiveConstant
+  {-# INLINE toConstant #-}
+
 internConstant :: Env -> String -> STM Constant
 internConstant env name = do
   cs <- readTVar (envConstants env)
