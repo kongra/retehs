@@ -20,8 +20,6 @@ module AI.Rete
     , createEnv
 
       -- * Symbols
-    , Constant
-    , Variable
     , Primitive      (..)
     , NamedPrimitive (..)
     , var
@@ -48,7 +46,7 @@ module AI.Rete
     , val
     , valE
     , valM
-    , VarVal (..)
+    , VarVal         (..)
     )
     where
 
