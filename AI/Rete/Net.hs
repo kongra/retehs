@@ -16,6 +16,7 @@ module AI.Rete.Net
     (
       -- * Adding/removing productions
       addProd
+    , addProdR
     , removeProd
 
       -- * Conditions
@@ -198,7 +199,7 @@ joinTestForField i v field earlierConds =
   case v of
     JustVariable _ -> case headMay (matches earlierConds) of
       Nothing              -> Nothing
-      Just (Location i' f) -> Just (JoinTest field f (i - i'))
+      Just (Location i' f) -> Just (JoinTest field f (i - i' - 1))
 
     JustConstant _ -> Nothing -- No tests from Consts (non-Vars).
   where

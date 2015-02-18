@@ -673,7 +673,7 @@ ntokAdjs ntok flags vs = whenNot (visited ntok vs) $ do
 
   (nVn, pVn, cVn) <- tokAdjs flags vs' node parent children
   njrsVn          <- datVn flags (is TokNegJoinResults flags)
-                     "njrs (owners)" vs'
+                     "njrs (wmes)" vs'
                      -- When visualizing the negative join results we only
                      -- show the owner wmes, cause owner in every negative join
                      -- result is this tok.

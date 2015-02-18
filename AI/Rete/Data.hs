@@ -441,7 +441,7 @@ instance Hashable WmeTok where
     ProdWmeTok ptok -> salt `hashWithSalt` ptok
   {-# INLINE hashWithSalt #-}
 
-
+-- | Type of tokens propagated by Joins.
 type JoinTok = Either Dtt Btok
 
 -- ALPHA MEMORY

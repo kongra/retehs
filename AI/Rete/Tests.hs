@@ -32,21 +32,79 @@ blue   = NamedPrimitive (IntPrimitive 8)  "blue"
 table  = NamedPrimitive (IntPrimitive 9)  "table"
 leftOf = NamedPrimitive (IntPrimitive 10) "leftOf"
 
-teścik :: IO ()
-teścik = do
+test2 :: IO ()
+test2 = do
   env  <- atomically createEnv
 
-  _    <- atomically $
-          addWme env b1 on "table"
+  _ <- atomically $ addProdR env
+       ( c (var "x") leftOf "z")
+       [                       ]
+       [ n (var "x") on     "y"]
 
-  prod <- atomically $
-          addProd env
-                  (c (var "<x>") on (var "<y>"))
-                  noMoreConds
-                  noNegs
-                  (traceAction "success")
+       (traceAction "success")
+       (traceAction "too early, my dear")
 
-  repr <- atomically $ toString boundless soleNetTopDown env
-  putStrLn repr
+  let opts = with BmemToks
+           . with NegToks
+           . with ProdToks
+           . with TokWmes
+           . with TokNegJoinResults
+           . no   WmeIds
+           . with AmemWmes
+           . soleNetTopDown
+           -- . (with TokWmesSymbolic)
+
+  atomically (toString boundless opts env) >>= putStrLn
+
+  _ <- atomically $ addWme env "a" leftOf "z"
+  atomically (toString boundless opts env) >>= putStrLn
+
+  _ <- atomically $ addWme env "a" on     "y"
+  atomically (toString boundless opts env) >>= putStrLn
 
   return ()
+
+-- test1 :: IO ()
+-- test1 = do
+--   env  <- atomically createEnv
+
+--   _ <- atomically $ addProd env
+--        ( c (var "x") (var "y") (var "z"))
+--        [ c (var "x") (var "z") (var "y")
+--        , c (var "y") (var "x") (var "z")
+--        , c (var "y") (var "z") (var "x")
+--        , c (var "z") (var "x") (var "y")
+--        , c (var "z") (var "y") (var "x") ]
+--        noNegs
+--        (traceAction "success")
+
+--   -- repr <- atomically $ toString boundless soleNetTopDown env
+--   -- putStrLn repr
+
+--   _ <- atomically $ addWme env "a" "b" "c"
+--   _ <- atomically $ addWme env "a" "c" "b"
+--   _ <- atomically $ addWme env "b" "a" "c"
+--   _ <- atomically $ addWme env "b" "c" "a"
+--   _ <- atomically $ addWme env "c" "a" "b"
+--   _ <- atomically $ addWme env "c" "b" "a"
+
+--   return ()
+
+-- teścik :: IO ()
+-- teścik = do
+--   env  <- atomically createEnv
+
+--   _    <- atomically $
+--           addWme env b1 on "table"
+
+--   prod <- atomically $
+--           addProd env
+--                   (c (var "<x>") on (var "<y>"))
+--                   noMoreConds
+--                   noNegs
+--                   (traceAction "success")
+
+--   repr <- atomically $ toString boundless soleNetTopDown env
+--   putStrLn repr
+
+--   return ()

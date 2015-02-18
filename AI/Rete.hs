@@ -38,6 +38,7 @@ module AI.Rete
 
       -- * Adding/removing productions
     , addProd
+    , addProdR
     , removeProd
 
       -- * Actions

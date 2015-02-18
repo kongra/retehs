@@ -2,7 +2,6 @@
 {-# LANGUAGE    RankNTypes            #-}
 {-# LANGUAGE    FlexibleInstances     #-}
 {-# LANGUAGE    MultiParamTypeClasses #-}
-{-# LANGUAGE    UndecidableInstances  #-}
 {-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
@@ -584,6 +583,89 @@ instance TokWme Ptok where
   tokWme Ptok { ptokWme = w } = w
   {-# INLINE tokWme #-}
 
+-- TOKEN INSTRUMENTATION
+
+class AddToParentTok a p where addToParentTok :: a -> p   -> STM ()
+class AddToWme       a   where addToWme       :: a -> Wme -> STM ()
+
+addWmeTok :: WmeTok -> Wme -> STM ()
+addWmeTok tok Wme { wmeToks = toks } = modifyTVar' toks (Set.insert tok)
+{-# INLINE addWmeTok #-}
+
+addToParentTokImpl :: (Hashable b, Eq b)
+    => (p -> TVar (Set.HashSet b)) -> (a -> b) -> a -> p -> STM ()
+addToParentTokImpl children constr tok parent =
+  modifyTVar' (children parent) (Set.insert (constr tok))
+{-# INLINE addToParentTokImpl #-}
+
+instance AddToWme Btok where
+  addToWme = addWmeTok . BmemWmeTok
+  {-# INLINE addToWme #-}
+
+instance AddToWme Ntok where
+  addToWme = addWmeTok . NegWmeTok
+  {-# INLINE addToWme #-}
+
+instance AddToWme Ptok where
+  addToWme = addWmeTok . ProdWmeTok
+  {-# INLINE addToWme #-}
+
+instance AddToParentTok Btok Dtt where
+  addToParentTok _ _ = return () -- We don't add anything to Dtt.
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Btok Btok where
+  addToParentTok = addToParentTokImpl btokChildren BmemWmeTok
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ntok Dtt where
+  addToParentTok _ _ = return () -- We don't add anything to Dtt.
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ntok Btok where
+  addToParentTok = addToParentTokImpl btokChildren NegWmeTok
+
+instance AddToParentTok Ntok Ntok where
+  addToParentTok = addToParentTokImpl ntokChildren Left
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ptok Dtt where
+  addToParentTok _ _ = return () -- We don't add anything to Dtt.
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ptok Btok where
+  addToParentTok = addToParentTokImpl btokChildren ProdWmeTok
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ptok Ntok where
+  addToParentTok = addToParentTokImpl ntokChildren Right
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Btok (Either Dtt Btok) where
+  addToParentTok btok (Left  parent) = addToParentTok btok parent
+  addToParentTok btok (Right parent) = addToParentTok btok parent
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ntok JoinTok where
+  addToParentTok btok (Left  parent) = addToParentTok btok parent
+  addToParentTok btok (Right parent) = addToParentTok btok parent
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ntok (Either JoinTok Ntok) where
+  addToParentTok btok (Left  parent) = addToParentTok btok parent
+  addToParentTok btok (Right parent) = addToParentTok btok parent
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ptok JoinTok where
+  addToParentTok btok (Left  parent) = addToParentTok btok parent
+  addToParentTok btok (Right parent) = addToParentTok btok parent
+  {-# INLINE addToParentTok #-}
+
+instance AddToParentTok Ptok (Either JoinTok Ntok) where
+  addToParentTok btok (Left  parent) = addToParentTok btok parent
+  addToParentTok btok (Right parent) = addToParentTok btok parent
+  {-# INLINE addToParentTok #-}
+
 -- BETA MEMORY
 
 leftActivateBmem :: Env -> Bmem -> Either Dtt Btok -> Wme -> STM ()
@@ -596,6 +678,9 @@ leftActivateBmem env bmem tok wme = do
                     , btokParent   = tok
                     , btokNode     = bmem
                     , btokChildren = children }
+
+  newTok `addToParentTok` tok
+  newTok `addToWme`       wme
 
   -- Add newTok to bmem.toks.
   modifyTVar' (bmemToks bmem) (Set.insert newTok)
@@ -788,6 +873,9 @@ leftActivateNeg env neg tok wme = do
                     , ntokChildren       = newChildren
                     , ntokNegJoinResults = newNjResults }
 
+  newTok `addToParentTok` tok
+  case wme of { Just wme' -> newTok `addToWme` wme'; Nothing -> return ()}
+
   writeTVar (negToks neg) (Set.insert newTok toks)
 
   let amem = negAmem neg
@@ -852,6 +940,9 @@ leftActivateProd env prod tok wme = do
                     , ptokWme    = wme
                     , ptokParent = tok
                     , ptokNode   = prod }
+
+  newTok `addToParentTok` tok
+  case wme of { Just wme' -> newTok `addToWme` wme'; Nothing -> return ()}
 
   modifyTVar' (prodToks prod) (Set.insert newTok)
 
@@ -1053,13 +1144,16 @@ deleteTokAndDescendents :: Env -> WmeTok
 deleteTokAndDescendents env tok tokPolicy wmePolicy nodePolicy = do
   deleteDescendentsOfTok env tok
 
-  when (nodePolicy == RemoveFromNode) $ removeTokFromItsNode tok
+  when (nodePolicy == RemoveFromNode) $
+    removeTokFromItsNode tok
 
-  when (wmePolicy == RemoveFromWme) $ case tokWme tok of
-    Nothing -> return ()
-    Just w  -> modifyTVar' (wmeToks w) (Set.delete tok)
+  when (wmePolicy == RemoveFromWme) $
+    case tokWme tok of
+      Nothing -> return ()
+      Just w  -> modifyTVar' (wmeToks w) (Set.delete tok)
 
-  when (tokPolicy == RemoveFromParent) $ removeTokFromItsParent tok
+  when (tokPolicy == RemoveFromParent) $
+    removeTokFromItsParent tok
 
   -- Node-specific deletion.
   case tok of
@@ -1095,8 +1189,9 @@ instance RemoveTokFromItsParent Ntok where
       Left  _      -> return () -- No removal from Dtt.
       Right parent -> modifyTVar' (btokChildren parent)
                       (Set.delete (NegWmeTok ntok))
-    Right parent  -> modifyTVar' (ntokChildren parent)
-                     (Set.delete (Left ntok))
+
+    Right parent -> modifyTVar' (ntokChildren parent)
+                    (Set.delete (Left ntok))
   {-# INLINE removeTokFromItsParent #-}
 
 instance RemoveTokFromItsParent Ptok where
@@ -1129,8 +1224,9 @@ deleteNtok ntok = do
 {-# INLINE deleteNtok #-}
 
 deletePtok :: Env -> Ptok -> STM ()
-deletePtok env ptok = case prodRevokeAction (ptokNode ptok) of
-  -- Let's just fire a proper action (if present).
-  Nothing     -> return ()
-  Just action -> action (Actx env (ptokNode ptok) ptok (tokWmes ptok))
+deletePtok env ptok =
+  case prodRevokeAction (ptokNode ptok) of
+    -- Let's just fire a proper action (if present).
+    Nothing     -> return ()
+    Just action -> action (Actx env (ptokNode ptok) ptok (tokWmes ptok))
 {-# INLINE deletePtok #-}
