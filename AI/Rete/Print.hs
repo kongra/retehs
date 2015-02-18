@@ -613,9 +613,12 @@ showTok :: (Visitable a, TokWmes a)
         => (a -> Id) -> a -> Flags -> Visited -> STM ShowS
 showTok tokId tok flags vs = do
   let s = if is TokWmes flags
-            then (if is TokWmesSymbolic flags
-                    then showTokWmesSymbolic tok
-                    else showTokWmesExplicit (is WmeIds flags) tok)
+            then compose [ showString "{"
+                         , if is TokWmesSymbolic flags
+                             then showTokWmesSymbolic tok
+                             else showTokWmesExplicit (is WmeIds flags) tok
+                         , showString "}"]
+
             else showString "{..}"
   withEllipsis (visited tok vs) $ withOptIdS (is TokIds flags) s (tokId tok)
 {-# INLINE showTok #-}

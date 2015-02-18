@@ -50,6 +50,7 @@ test2 = do
            . with TokWmes
            . with TokNegJoinResults
            . no   WmeIds
+           . no   TokIds
            . with AmemWmes
            . soleNetTopDown
            -- . (with TokWmesSymbolic)
