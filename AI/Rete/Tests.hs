@@ -44,16 +44,7 @@ test2 = do
        (traceAction "success")
        (traceAction "too early, my dear")
 
-  let opts = with BmemToks
-           . with NegToks
-           . with ProdToks
-           . with TokWmes
-           . with TokNegJoinResults
-           . no   WmeIds
-           . no   TokIds
-           . with AmemWmes
-           . soleNetTopDown
-           -- . (with TokWmesSymbolic)
+  let opts = nonVerboseData . netTopDown
 
   atomically (toString boundless opts env) >>= putStrLn
 

@@ -33,8 +33,9 @@ module AI.Rete.Print
     , with, no, clear
 
       -- * Predefined compound 'Switch'es
-    , soleNetTopDown
-    , soleNetBottomUp
+    , netTopDown
+    , netBottomUp
+    , nonVerboseData
 
       -- * Predefined 'Switch'es
     , withNet
@@ -1016,11 +1017,17 @@ toString d switch = liftM evalShowS . toShowS d switch
 -- PREDEFINED PRINT CONFIGURATIONS
 
 -- | A 'Switch' for presenting sole Rete net bottom-up.
-soleNetBottomUp :: Switch
-soleNetBottomUp = up . with NetEmph . withNet . withIds . with AmemFields
-                . with Uls
+netBottomUp :: Switch
+netBottomUp = up . with NetEmph . withNet . withIds . with AmemFields
+            . with Uls
 
 -- | A 'Switch' for presenting sole Rete net top-down.
-soleNetTopDown :: Switch
-soleNetTopDown = down . with NetEmph . withNet . withIds . with AmemFields
-               . with Uls
+netTopDown :: Switch
+netTopDown = down . with NetEmph . withNet . withIds . with AmemFields
+           . with Uls
+
+-- | A default verbosity level for presenting data.
+nonVerboseData :: Switch
+nonVerboseData = with BmemToks . with NegToks . with ProdToks . with TokWmes
+               . with TokNegJoinResults . no   WmeIds . no   TokIds
+               . with AmemWmes
