@@ -176,13 +176,13 @@ data Constant = StringConstant         !String !Id
               | NamedPrimitiveConstant !NamedPrimitive
 
 instance Show Constant where
-  show (StringConstant         s _)  = s
+  show (StringConstant         s _) = s
   show (PrimitiveConstant      p  ) = show p
   show (NamedPrimitiveConstant np ) = show np
   {-# INLINE show #-}
 
 instance Eq Constant where
-  (StringConstant      _ id1 ) == (StringConstant      _ id2 ) = id1 == id2
+  (StringConstant      _  id1) == (StringConstant      _  id2) = id1 == id2
   (PrimitiveConstant      p1 ) == (PrimitiveConstant      p2 ) = p1  == p2
   (NamedPrimitiveConstant np1) == (NamedPrimitiveConstant np2) = np1 == np2
   _ == _ = False
@@ -204,7 +204,7 @@ instance Show Variable where
   {-# INLINE show #-}
 
 instance Eq Variable where
-  (StringVariable      _ id1 ) == (StringVariable      _ id2 ) = id1 == id2
+  (StringVariable       _ id1) == (StringVariable       _ id2) = id1 == id2
   (NamedPrimitiveVariable np1) == (NamedPrimitiveVariable np2) = np1 == np2
   _ == _ = False
   {-# INLINE (==) #-}
@@ -249,7 +249,7 @@ data Env =
 
 -- FIELDS AND THEIR VALUES
 
--- | Object (Constant or Variable).
+-- | Object.
 newtype Obj a = Obj a deriving Eq
 
 instance Show a => Show (Obj a) where
@@ -260,7 +260,7 @@ instance Hashable a => Hashable (Obj a) where
   hashWithSalt salt (Obj s) = salt `hashWithSalt` s
   {-# INLINE hashWithSalt #-}
 
--- | Attribute (Constant or Variable).
+-- | Attribute.
 newtype Attr a = Attr a deriving Eq
 
 instance Show a => Show (Attr a) where
@@ -271,7 +271,7 @@ instance Hashable a => Hashable (Attr a) where
   hashWithSalt salt (Attr s) = salt `hashWithSalt` s
   {-# INLINE hashWithSalt #-}
 
--- | Value (Constant or Variable).
+-- | Value.
 newtype Val a = Val a deriving Eq
 
 instance Show a => Show (Val a) where

@@ -155,16 +155,9 @@ feedEnvIndexes
           , wmeAttr       = a
           , wmeVal        = v } = do
 
-    let w = wildcardConstant
-
-    modifyTVar' byObj  (wmesIndexInsert o        wme)
-    modifyTVar' byObj  (wmesIndexInsert (Obj w)  wme)
-
-    modifyTVar' byAttr (wmesIndexInsert a        wme)
-    modifyTVar' byAttr (wmesIndexInsert (Attr w) wme)
-
-    modifyTVar' byVal  (wmesIndexInsert v        wme)
-    modifyTVar' byVal  (wmesIndexInsert (Val w)  wme)
+    modifyTVar' byObj  (wmesIndexInsert o  wme)
+    modifyTVar' byAttr (wmesIndexInsert a  wme)
+    modifyTVar' byVal  (wmesIndexInsert v  wme)
 {-# INLINE feedEnvIndexes #-}
 
 deleteFromEnvIndexes :: Env -> Wme -> STM ()
@@ -176,16 +169,9 @@ deleteFromEnvIndexes
           , wmeAttr       = a
           , wmeVal        = v } = do
 
-    let w = wildcardConstant
-
-    modifyTVar' byObj  (wmesIndexDelete o        wme)
-    modifyTVar' byObj  (wmesIndexDelete (Obj w)  wme)
-
-    modifyTVar' byAttr (wmesIndexDelete a        wme)
-    modifyTVar' byAttr (wmesIndexDelete (Attr w) wme)
-
-    modifyTVar' byVal  (wmesIndexDelete v        wme)
-    modifyTVar' byVal  (wmesIndexDelete (Val w)  wme)
+    modifyTVar' byObj  (wmesIndexDelete o wme)
+    modifyTVar' byAttr (wmesIndexDelete a wme)
+    modifyTVar' byVal  (wmesIndexDelete v wme)
 {-# INLINE deleteFromEnvIndexes #-}
 
 -- GENERATING IDS
@@ -523,14 +509,14 @@ feedAmems env wme o a v = do
   let w = wildcardConstant
   amems <- readTVar (envAmems env)
 
-  feedAmem env amems wme $! WmeKey o       a        v
-  feedAmem env amems wme $! WmeKey o       a        (Val w)
-  feedAmem env amems wme $! WmeKey o       (Attr w) v
-  feedAmem env amems wme $! WmeKey o       (Attr w) (Val w)
+  feedAmem env amems wme $! WmeKey      o        a       v
+  feedAmem env amems wme $! WmeKey      o        a  (Val w)
+  feedAmem env amems wme $! WmeKey      o  (Attr w)      v
+  feedAmem env amems wme $! WmeKey      o  (Attr w) (Val w)
 
-  feedAmem env amems wme $! WmeKey (Obj w) a        v
-  feedAmem env amems wme $! WmeKey (Obj w) a        (Val w)
-  feedAmem env amems wme $! WmeKey (Obj w) (Attr w) v
+  feedAmem env amems wme $! WmeKey (Obj w)       a       v
+  feedAmem env amems wme $! WmeKey (Obj w)       a  (Val w)
+  feedAmem env amems wme $! WmeKey (Obj w) (Attr w)      v
   feedAmem env amems wme $! WmeKey (Obj w) (Attr w) (Val w)
 {-# INLINE feedAmems #-}
 

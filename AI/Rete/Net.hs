@@ -110,30 +110,74 @@ activateAmemOnCreation :: Env
                        -> Val  Constant
                        -> STM ()
 activateAmemOnCreation env amem o a v = do
-  byObjIndex  <- readTVar (envWmesByObj  env)
-  byAttrIndex <- readTVar (envWmesByAttr env)
-  byValIndex  <- readTVar (envWmesByVal  env)
-
-  let wmesMatchingByObj  = Map.lookupDefault Set.empty o byObjIndex
-      wmesMatchingByAttr = Map.lookupDefault Set.empty a byAttrIndex
-      wmesMatchingByVal  = Map.lookupDefault Set.empty v byValIndex
-      wmesMatching       = wmesMatchingByObj  `Set.intersection`
-                           wmesMatchingByAttr `Set.intersection`
-                           wmesMatchingByVal
+  let (Obj  o') = o
+      (Attr a') = a
+      (Val  v') = v
+  wmes <- wmesForAmemFeed (isWildcard o') (isWildcard a') (isWildcard v')
+          env o a v
 
   -- Put all matching wmes into the amem.
-  writeTVar (amemWmes amem) wmesMatching
+  writeTVar (amemWmes amem) wmes
 
   -- Iteratively work on every wme.
-  forM_ (toList wmesMatching) $ \wme -> do
+  forM_ (toList wmes) $ \wme -> do
     -- Put amem to wme registry of Amems.
     modifyTVar' (wmeAmems wme) (amem:)
 
-    -- Put wme into amem indexes
+    -- Put Wme into amem indexes
     modifyTVar' (amemWmesByObj  amem) (wmesIndexInsert (wmeObj  wme) wme)
     modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
     modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
+  where
+    isWildcard s = s == wildcardConstant
 {-# INLINE activateAmemOnCreation #-}
+
+wmesForAmemFeed :: Bool -> Bool -> Bool
+                -> Env
+                -> Obj Constant -> Attr Constant -> Val Constant
+                -> STM (Set.HashSet Wme)
+wmesForAmemFeed False False False env o a v = do -- o a v
+  byObj  <- readTVar (envWmesByObj  env)
+  byAttr <- readTVar (envWmesByAttr env)
+  byVal  <- readTVar (envWmesByVal  env)
+  let s1 = Map.lookupDefault Set.empty o byObj
+      s2 = Map.lookupDefault Set.empty a byAttr
+      s3 = Map.lookupDefault Set.empty v byVal
+  return $ s1 `Set.intersection` s2 `Set.intersection` s3
+
+wmesForAmemFeed False False True env o a _ = do  -- o a *
+  byObj  <- readTVar (envWmesByObj  env)
+  byAttr <- readTVar (envWmesByAttr env)
+  let s1 = Map.lookupDefault Set.empty o byObj
+      s2 = Map.lookupDefault Set.empty a byAttr
+  return $ s1 `Set.intersection` s2
+
+wmesForAmemFeed False True False env o _ v = do  -- o * v
+  byObj  <- readTVar (envWmesByObj  env)
+  byVal  <- readTVar (envWmesByVal  env)
+  let s1 = Map.lookupDefault Set.empty o byObj
+      s2 = Map.lookupDefault Set.empty v byVal
+  return $ s1 `Set.intersection` s2
+
+wmesForAmemFeed False True True env o _ _ =      -- o * *
+  liftM (Map.lookupDefault Set.empty o) (readTVar (envWmesByObj env))
+
+wmesForAmemFeed True False False env _ a v = do  -- * a v
+  byAttr <- readTVar (envWmesByAttr env)
+  byVal  <- readTVar (envWmesByVal  env)
+  let s1 = Map.lookupDefault Set.empty a byAttr
+      s2 = Map.lookupDefault Set.empty v byVal
+  return $ s1 `Set.intersection` s2
+
+wmesForAmemFeed True False True env _ a _ =      -- * a *
+  liftM (Map.lookupDefault Set.empty a) (readTVar (envWmesByAttr env))
+
+wmesForAmemFeed True True False env _ _ v =      -- * * v
+  liftM (Map.lookupDefault Set.empty v) (readTVar (envWmesByVal env))
+
+wmesForAmemFeed True True True env _ _ _ =       -- * * *
+  liftM (Set.fromList . Map.elems) (readTVar (envWmes env))
+{-# INLINE wmesForAmemFeed #-}
 
 -- BMEM CREATION
 

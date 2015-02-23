@@ -18,43 +18,45 @@ import AI.Rete
 import AI.Rete.Print
 import Control.Concurrent.STM
 
-b1, b2, b3, b4 :: NamedPrimitive
-b1     = NamedPrimitive (IntPrimitive 1)  "b1"
-b2     = NamedPrimitive (IntPrimitive 2)  "b2"
-b3     = NamedPrimitive (IntPrimitive 3)  "b3"
-b4     = NamedPrimitive (IntPrimitive 4)  "b4"
-
-on, color, red, blue, table, leftOf :: NamedPrimitive
-on     = NamedPrimitive (IntPrimitive 5)  "on"
-color  = NamedPrimitive (IntPrimitive 6)  "color"
-red    = NamedPrimitive (IntPrimitive 7)  "red"
-blue   = NamedPrimitive (IntPrimitive 8)  "blue"
-table  = NamedPrimitive (IntPrimitive 9)  "table"
-leftOf = NamedPrimitive (IntPrimitive 10) "leftOf"
-
-test2 :: IO ()
-test2 = do
-  env  <- atomically createEnv
-
-  _ <- atomically $ addProdR env
-       ( c (var "x") leftOf "z")
-       [                       ]
-       [ n (var "x") on     "y"]
-
-       (traceAction "success")
-       (traceAction "too early, my dear")
-
+test3 :: IO ()
+test3 = do
   let opts = nonVerboseData . netTopDown
+  env  <- atomically createEnv
+  _    <- atomically $ addProd env
+          ( c (var "p") "jestPtak" True )
+          [ c "sójka"   "jestPtak" (var "p")]
+          [ n "sójka"   "jestSsak" True
+          , n (var "p") "jestPłaz" True ]
 
-  atomically (toString boundless opts env) >>= putStrLn
+          passAction
 
-  _ <- atomically $ addWme env "a" leftOf "z"
-  atomically (toString boundless opts env) >>= putStrLn
-
-  _ <- atomically $ addWme env "a" on     "y"
   atomically (toString boundless opts env) >>= putStrLn
 
   return ()
+
+-- test2 :: IO ()
+-- test2 = do
+--   env  <- atomically createEnv
+
+--   _ <- atomically $ addProdR env
+--        ( c (var "x") leftOf "z")
+--        [                       ]
+--        [ n (var "x") on     "y"]
+
+--        (traceAction "success")
+--        (traceAction "too early, my dear")
+
+--   let opts = nonVerboseData . netTopDown
+
+--   atomically (toString boundless opts env) >>= putStrLn
+
+--   _ <- atomically $ addWme env "a" leftOf "z"
+--   atomically (toString boundless opts env) >>= putStrLn
+
+--   _ <- atomically $ addWme env "a" on     "y"
+--   atomically (toString boundless opts env) >>= putStrLn
+
+--   return ()
 
 -- test1 :: IO ()
 -- test1 = do
@@ -100,3 +102,17 @@ test2 = do
 --   putStrLn repr
 
 --   return ()
+
+-- b1, b2, b3, b4 :: NamedPrimitive
+-- b1     = NamedPrimitive (IntPrimitive 1 ) "b1"
+-- b2     = NamedPrimitive (IntPrimitive 2 ) "b2"
+-- b3     = NamedPrimitive (IntPrimitive 3 ) "b3"
+-- b4     = NamedPrimitive (IntPrimitive 4 ) "b4"
+
+-- on, color, red, blue, table, leftOf :: NamedPrimitive
+-- on     = NamedPrimitive (IntPrimitive 5 ) "on"
+-- color  = NamedPrimitive (IntPrimitive 6 ) "color"
+-- red    = NamedPrimitive (IntPrimitive 7 ) "red"
+-- blue   = NamedPrimitive (IntPrimitive 8 ) "blue"
+-- table  = NamedPrimitive (IntPrimitive 9 ) "table"
+-- leftOf = NamedPrimitive (IntPrimitive 10) "leftOf"
