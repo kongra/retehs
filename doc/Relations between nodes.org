@@ -6,52 +6,109 @@
 | Neg       | Neg, Prod       | Join, Neg |
 | Prod      |                 | Join, Neg |
 
+Powtarzające się operacje:
+* Dodanie węzła-dziecka do węzła-rodzica
+* Dodanie węzła-dziecka do węzła-rodzica (allChildren)
+* Dodanie tokenu do węzła, w którym jest składowany
+* Dodanie tokenu-dziecka do tokena-rodzica
+* "Dodanie" Amem do Wme
+* Dodanie Wme do Amem
+* "Dodanie" Tok do Wme
+* Dodanie NegativeJoinResult to Ntok
+* Dodanie węzła do Amem.amemSuccessors
 
-prod :: PosCond -> PosConds -> NegConds -> Then -> Revoke -> STM ()
+INTERESUJĄCE ZMIENNE TRANSAKCYJNE
 
-newtype PosConds = PosConds [PosCond]
-newtype NegConds = NegConds [NegCond]
+envIdState		:: !(TVar Id)
+-- idgen - nie zmieniamy
 
-newtype Then = Then Action
-data Revoke  = Revoke Action | Pass
+envConstants		:: !(TVar (Map.HashMap String Constant))
+envVariables		:: !(TVar (Map.HashMap String Variable))
+-- internowanie stałych i zmiennych - nie zmieniamy
 
-prod (c   "x" "on"    "y")
-   [ (c   "w" "at"    "b")
-   , (c   "g" "with"  "a")
-   , (c   "g" "below" "z")]
-   [ (not "z" "from"  "w")]
+envWmes			:: !(TVar (Map.HashMap WmeKey Wme))
+envWmesByObj		:: !(TVar WmesByObj )
+envWmesByAttr		:: !(TVar WmesByAttr)
+envWmesByVal		:: !(TVar WmesByVal )
+-- dodanie   wme do Env
+-- usunięcie Wme z  Env
 
-   (then   action)
-   (revoke action)
+envAmems		:: !(TVar (Map.HashMap WmeKey Amem))
+-- dodanie   Amem do Env
+-- usunięcie Amem z  Env
 
-prod (c   "x" "on"    "y")
-   []
-   [ (not "z" "from"  "w")]
+envProds		:: !(TVar (Set.HashSet Prod))
+-- dodanie   Prod do Env
+-- usunięcie Prod z  Env
 
-   (then   action)
-   (norevoke)
+wmeAmems		:: !(TVar [Amem])
+-- Dodanie Amem do Wme
+-- Usunięcie Amem z Wme (? nie wiem, czy potrzebne)
 
-* Tworzenie struktury sieci
-  1. Węzłem początkowym jest Dtn. Jego dzieckiem jest Join od
-     pierwszego PosCond.
-  2. Kolejno następują pary Bmem + Join od kolejnych PosConds (o ile
-     takowe występują).
-  3. Kolejno następują węzły Neg, o ile mamy wyrażenia NegConds.
-  4. Pod ostatnim Joinem lub Neg doczepiany jest węzeł Prod.
+wmeToks			:: !(TVar (Set.HashSet WmeTok))
+-- Dodanie Tok do Wme
+-- Usunięcie Tok z Wme
 
-* Amem.successors musi być uporządkowana
+wmeNegJoinResults	:: !(TVar (Set.HashSet NegJoinResult))
+-- Dodanie NegJoinResult do Wme
+-- Usunięcie NegJoinResult z Wme
 
-* Kolejność węzłów-dzieci nie ma znaczenia
+btokChildren		:: !(TVar (Set.HashSet WmeTok))
+-- Dodanie WmeTok do btokChildren
+-- Usunięcie Wme Tok z btokChildren
 
-* Dtt - Dummy Top Token
-  Przyjmujemy założenie, że Dtt jest wyłącznie figurą
-  retoryczną. Tworząc nowy token, którego rodzicem jest Dtt, nie
-  dodajemy tego nowego tokena do zbioru dzieci Dtt (nie utrzymujemy go
-  w Dtt). Nie jest to konieczne, ponieważ Dtt nigdy nie podlega
-  usuwaniu.
+ntokChildren		:: !(TVar (Set.HashSet (Either Ntok Ptok)))
+-- Dodanie/usunięcie
 
-* Gdzie powstają Tokeny ?
-  - Singleton Dtt skojarzony z Dtn (nie ma Wme)
-  - BmemTok w Bmem (ma Wme)
-  - NegTok  w Neg  (ma Maybe Wme, ma negJoinResults)
-  - ProdTok w Prod (ma Maybe Wme)
+ntokNegJoinResults	:: !(TVar (Set.HashSet NegJoinResult))
+-- Dodanie/usunięcie
+
+amemSuccessors		:: !(TVar (Seq.Seq AmemSuccessor))
+-- Dodanie/usunięcie
+
+amemRefCount		:: !(TVar Int)
+-- Inkrementacja/dekrementacja - zastanowić się.
+
+amemWmes		:: !(TVar (Set.HashSet Wme))
+amemWmesByObj		:: !(TVar WmesByObj)
+amemWmesByAttr		:: !(TVar WmesByAttr)
+amemWmesByVal		:: !(TVar WmesByVal)
+-- Dodanie/usunięcie Wme
+
+dtnAllChildren		:: !(TVar (AmemSuccessorsMap Join))
+-- Dodanie/usunięcie do allChildren
+
+bmemChildren		:: !(TVar (Set.HashSet       Join))
+-- Dodanie/usunięcie
+
+bmemAllChildren		:: !(TVar (AmemSuccessorsMap Join))
+-- Dodanie/usunięcie allChildren
+
+bmemToks		:: !(TVar (Set.HashSet       Btok))
+-- Dodanie/usunięcie
+
+joinBmem		:: !(TVar (Maybe             Bmem))
+-- Dodanie/usunięcie (ew. sprawdzenie, czy nie nadpisujemy)
+
+joinNegs		:: !(TVar (AmemSuccessorsMap Neg ))
+-- Dodanie/usunięcie
+joinProds		:: !(TVar (Set.HashSet       Prod))
+-- Dodanie/usunięcie
+
+joinLeftUnlinked	:: !(TVar Bool)
+joinRightUnlinked	:: !(TVar Bool)
+-- U/L - abstrakcja już jest
+
+negNegs			:: !(TVar (AmemSuccessorsMap Neg))
+-- Dodanie/usunięcie
+negProds		:: !(TVar (Set.HashSet       Prod))
+-- Dodanie/usunięcie
+
+negToks			:: !(TVar (Set.HashSet Ntok))
+-- Dodanie/usunięcie
+
+negRightUnlinked	:: !(TVar Bool)
+-- U/L - abstracja już jest
+
+prodToks		:: !(TVar (Set.HashSet Ptok))
+-- Dodanie/usunięcie

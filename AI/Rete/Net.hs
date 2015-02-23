@@ -33,7 +33,8 @@ module AI.Rete.Net
     , valM
     , VarVal (..)
 
-      -- * Predefined actions
+      -- * Predefined Actions and Action-related utils
+    , acompose
     , passAction
     , traceAction
     )
@@ -854,7 +855,12 @@ noMoreConds = []
 noNegs :: [N]
 noNegs = []
 
--- PREDEFINED ACTIONS
+-- PREDEFINED ACTIONS AND ACTION-RELATED OPS
+
+-- | Composes the passed Actions.
+acompose :: [Action] -> Action
+acompose as actx = forM_ as $ \a -> a actx
+{-# INLINE acompose #-}
 
 -- | An action that doesn't do anything.
 passAction :: Action

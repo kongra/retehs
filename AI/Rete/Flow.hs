@@ -27,10 +27,6 @@ module AI.Rete.Flow
     , Var
     , ToConstantOrVariable (toConstantOrVariable)
 
-      -- * Transactional utils
-    , nullTSet
-    , toListT
-
       -- * Adding/removing Wmes
     , addWme
     , removeWme
@@ -55,6 +51,10 @@ module AI.Rete.Flow
     , nullJoinChildren
     , negChildren
     , nullNegChildren
+
+      -- * Utils/internals
+    , nullTSet
+    , toListT
     )
     where
 
@@ -146,33 +146,33 @@ createEnv = do
              , envProds      = prods
              , envDtn        = Dtn dtnChildren }
 
-feedEnvIndexes :: Env -> Wme -> STM ()
-feedEnvIndexes
-  Env     { envWmesByObj  = byObj
-          , envWmesByAttr = byAttr
-          , envWmesByVal  = byVal }
+addToEnvIndexes :: Wme -> Env -> STM ()
+addToEnvIndexes
   wme@Wme { wmeObj        = o
           , wmeAttr       = a
-          , wmeVal        = v } = do
-
-    modifyTVar' byObj  (wmesIndexInsert o  wme)
-    modifyTVar' byAttr (wmesIndexInsert a  wme)
-    modifyTVar' byVal  (wmesIndexInsert v  wme)
-{-# INLINE feedEnvIndexes #-}
-
-deleteFromEnvIndexes :: Env -> Wme -> STM ()
-deleteFromEnvIndexes
+          , wmeVal        = v }
   Env     { envWmesByObj  = byObj
           , envWmesByAttr = byAttr
-          , envWmesByVal  = byVal}
+          , envWmesByVal  = byVal } = do
+
+    modifyTVar' byObj  (wmesIndexInsert o wme)
+    modifyTVar' byAttr (wmesIndexInsert a wme)
+    modifyTVar' byVal  (wmesIndexInsert v wme)
+{-# INLINE addToEnvIndexes #-}
+
+removeFromEnvIndexes :: Wme -> Env -> STM ()
+removeFromEnvIndexes
   wme@Wme { wmeObj        = o
           , wmeAttr       = a
-          , wmeVal        = v } = do
+          , wmeVal        = v }
+  Env     { envWmesByObj  = byObj
+          , envWmesByAttr = byAttr
+          , envWmesByVal  = byVal } = do
 
     modifyTVar' byObj  (wmesIndexDelete o wme)
     modifyTVar' byAttr (wmesIndexDelete a wme)
     modifyTVar' byVal  (wmesIndexDelete v wme)
-{-# INLINE deleteFromEnvIndexes #-}
+{-# INLINE removeFromEnvIndexes #-}
 
 -- GENERATING IDS
 
@@ -329,12 +329,12 @@ class ToVar a where
   var :: a -> Var
 
 instance ToVar String where
-  var ""   = error "ERROR (3): EMPTY VARIABLE NAME."
+  var ""   = error "ERROR (2): EMPTY VARIABLE NAME."
   var name = (`internVariable` name)
   {-# INLINE var #-}
 
 instance ToVar NamedPrimitive where
-  var (NamedPrimitive _ "") = error "ERROR (4): EMPTY VARIABLE NAME."
+  var (NamedPrimitive _ "") = error "ERROR (3): EMPTY VARIABLE NAME."
   var np                    = \_ -> return (NamedPrimitiveVariable np)
   {-# INLINE var #-}
 
@@ -444,6 +444,7 @@ activateAmem env amem wme = do
   forMM_ (toListT (amemSuccessors amem)) $ \s -> case s of
     JoinSuccessor join -> rightActivateJoin env join wme
     NegSuccessor  neg  -> rightActivateNeg  env neg  wme
+{-# INLINE activateAmem #-}
 
 -- WMES
 
@@ -463,11 +464,9 @@ instance AddWme Env where
       else do
         wme <- createWme env o' a' v'
 
-        -- Add wme to envWmes under k.
+        -- Add wme to Working Memory
         writeTVar (envWmes env) $! Map.insert k wme wmes
-
-        -- Add wme to env indexes (including wildcard key).
-        feedEnvIndexes env wme
+        wme `addToEnvIndexes` env
 
         -- Propagate wme into amems and return.
         feedAmems env wme o' a' v'
@@ -1043,7 +1042,7 @@ removeWmeImpl env o a v = do
     Just wme -> do
       -- Remove from Working Memory (Env registry and indexes)
       writeTVar (envWmes env) $! Map.delete k wmes
-      deleteFromEnvIndexes env wme
+      wme `removeFromEnvIndexes` env
       -- ... and propagate down the network.
       propagateWmeRemoval env wme o a v
       return True

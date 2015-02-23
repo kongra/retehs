@@ -51,7 +51,8 @@ module AI.Rete
     , valM
     , VarVal         (..)
 
-      -- * Predefined actions
+      -- * Predefined Actions and Action-related utils
+    , acompose
     , passAction
     , traceAction
     )

@@ -47,6 +47,11 @@ module AI.Rete.Print
     , withIds
     , noIds
 
+      -- * Actions and related utils
+    , traceTokAction
+    , traceTokActionD
+    , traceVarAction
+
       -- * 'Flag's (detailed)
     , Flag (..)
     )
@@ -54,6 +59,7 @@ module AI.Rete.Print
 
 import           AI.Rete.Data
 import           AI.Rete.Flow
+import qualified AI.Rete.Net as Net
 import           Control.Concurrent.STM
 import           Control.Monad (liftM)
 import           Data.Foldable (Foldable)
@@ -63,6 +69,7 @@ import           Data.Hashable (Hashable, hashWithSalt)
 import           Data.List (intersperse)
 import           Data.Maybe (catMaybes)
 import           Data.Tree.Print
+import           Debug.Trace
 import           Kask.Control.Monad (toListM, mapMM)
 import           Kask.Data.Function (compose, rcompose)
 
@@ -1031,3 +1038,23 @@ nonVerboseData :: Switch
 nonVerboseData = with BmemToks . with NegToks . with ProdToks . with TokWmes
                . with TokNegJoinResults . no   WmeIds . no   TokIds
                . with AmemWmes
+
+-- ACTIONS AND RELATED UTILS
+
+-- | Action that traces the matching token.
+traceTokAction :: Depth -> Switch -> String -> Action
+traceTokAction d switch prefix actx = do
+  s <- toShowS d switch (actxTok actx)
+  let s1 = compose [showString prefix, s]
+  traceM (s1 "")
+
+-- | A variant of 'traceTokAction' that uses 'boundless' depth and
+-- 'nonVerboseData'.
+traceTokActionD :: String -> Action
+traceTokActionD = traceTokAction boundless nonVerboseData
+
+-- | Action that traces the Var.
+traceVarAction :: String -> Var -> Action
+traceVarAction prefix v actx = do
+  c <- Net.valE actx v
+  traceM (prefix ++ show c)

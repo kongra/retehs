@@ -23,16 +23,23 @@ test3 = do
   let opts = nonVerboseData . netTopDown
   env  <- atomically createEnv
   _    <- atomically $ addProd env
-          ( c (var "p") "jestPtak" True )
-          [ c "sójka"   "jestPtak" (var "p")]
-          [ n "sójka"   "jestSsak" True
-          , n (var "p") "jestPłaz" True ]
+          (c (var "p") "jestPtak" True)
+          []
+          []
+          (acompose [ traceTokActionD "tok: "
+                    , traceVarAction    "p: " (var "p")])
 
-          passAction
+  _    <- atomically $ addWme env
+          "sójka" "jestPtak" True
+
+  _    <- atomically $ addWme env
+          "wróbel" "jestPtak" True
+
+  _    <- atomically $ addWme env
+          "sikorka" "jestPtak" True
 
   atomically (toString boundless opts env) >>= putStrLn
-
-  return ()
+  -- return ()
 
 -- test2 :: IO ()
 -- test2 = do
