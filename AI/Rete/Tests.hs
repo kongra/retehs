@@ -1,5 +1,7 @@
-{-# LANGUAGE    Trustworthy #-}
-{-# OPTIONS_GHC -W -Wall    #-}
+{-# LANGUAGE    Trustworthy           #-}
+{-# LANGUAGE    MultiParamTypeClasses #-}
+{-# LANGUAGE    RankNTypes            #-}
+{-# OPTIONS_GHC -W -Wall              #-}
 ------------------------------------------------------------------------
 -- |
 -- Module      : AI.Rete.Tests
@@ -15,31 +17,64 @@
 module AI.Rete.Tests where
 
 import AI.Rete
+import AI.Rete.Flow
 import AI.Rete.Print
 import Control.Concurrent.STM
+import Control.Monad (void)
+import Data.List (permutations)
+
+class (Monad m1, Monad m2) => InNewEnv m1 m2 where
+  inNewEnv :: (Env -> m1 ()) -> m2 ()
+
+type Task m = Monad m => Env -> m ()
+
+class Monad m => AddWmeT m where
+  addWmeT :: (ToConstant o, ToConstant a, ToConstant v) => o -> a -> v -> Task m
+
+instance InNewEnv IO IO where inNewEnv f = atomically createEnv >>= f
+
+execPermutedTasks :: (Functor m, Monad m) => [m ()] -> m ()
+execPermutedTasks = mapM_ execTasks . permutations
+{-# INLINE execPermutedTasks #-}
+
+execTasks :: (Functor m, Monad m) => [m ()] -> m ()
+execTasks = mapM_ id
+{-# INLINE execTasks #-}
 
 test3 :: IO ()
 test3 = do
   let opts = nonVerboseData . netTopDown
-  env  <- atomically createEnv
-  _    <- atomically $ addProd env
-          (c (var "p") "jestPtak" True)
-          []
-          []
-          (acompose [ traceTokActionD "tok: "
-                    , traceVarAction    "p: " (var "p")])
 
-  _    <- atomically $ addWme env
-          "sójka" "jestPtak" True
+  inNewEnv $ \env -> do
+    atomically $ execPermutedTasks
+      [ void $ addWme env "sójka"  "jestPtak" True
+      , void $ addWme env "kawka"  "jestPtak" True
+      , void $ addWme env "wróbel" "jestPtak" True
 
-  _    <- atomically $ addWme env
-          "wróbel" "jestPtak" True
+      , void $ addProd env
+        (c "wróbel" "jestPtak" True) [] []
+        (traceTokActionD "tok: ")
+      ]
+    atomically (toString boundless opts env) >>= putStrLn
 
-  _    <- atomically $ addWme env
-          "sikorka" "jestPtak" True
+  -- _    <- atomically $
 
-  atomically (toString boundless opts env) >>= putStrLn
-  -- return ()
+  -- _    <- atomically $ addWme env
+  --         "wróbel" "jestPtak" True
+
+  -- _    <- atomically $ addWme env
+  --         "sikorka" "jestPtak" True
+
+  -- _    <- atomically $ addProd env
+  --         (c (var "p") "jestPtak" True)
+  --         []
+  --         []
+          -- (acompose [ traceTokActionD "tok: "
+          --           -- , traceVarAction    "p: " (var "p")
+          --           ])
+
+  -- atomically (toString boundless opts env) >>= putStrLn
+  return ()
 
 -- test2 :: IO ()
 -- test2 = do

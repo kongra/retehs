@@ -25,6 +25,7 @@ module AI.Rete.Flow
     , fieldConstant
     , var
     , Var
+    , ToConstant
     , ToConstantOrVariable (toConstantOrVariable)
 
       -- * Adding/removing Wmes
@@ -451,8 +452,8 @@ activateAmem env amem wme = do
 class AddWme e where
   -- | Adds a new fact represented by three fields and returns its Wme.
   -- When a Wme already exists in the system, does and returns Nothing.
-  addWme :: (ToConstant a, ToConstant b, ToConstant c)
-         => e -> a -> b -> c -> STM (Maybe Wme)
+  addWme :: (ToConstant o, ToConstant a, ToConstant v)
+         => e -> o -> a -> v -> STM (Maybe Wme)
 
 instance AddWme Env where
   addWme env o a v = do
@@ -1019,8 +1020,8 @@ nodeAmem = successorProp joinAmem negAmem
 class RemoveWme e where
   -- | Removes the fact described by 3 constants. Returns True on success
   -- and False when the fact was not present in the system.
-  removeWme :: (ToConstant a, ToConstant b, ToConstant c)
-            => e -> a -> b -> c -> STM Bool
+  removeWme :: (ToConstant o, ToConstant a, ToConstant v)
+            => e -> o -> a -> v -> STM Bool
 
 instance RemoveWme Env where
   removeWme env o a v = do

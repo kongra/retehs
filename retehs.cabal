@@ -26,6 +26,7 @@ library
                      AI.Rete.Flow
                      AI.Rete.Net
                      AI.Rete.Print
+                     AI.Rete.Test
                      AI.Rete
 
   other-extensions:  Safe
