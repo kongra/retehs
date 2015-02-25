@@ -137,7 +137,8 @@ wmesForAmemFeed :: Bool -> Bool -> Bool
                 -> Env
                 -> Obj Constant -> Attr Constant -> Val Constant
                 -> STM (Set.HashSet Wme)
-wmesForAmemFeed False False False env o a v = do -- o a v
+wmesForAmemFeed False False False env o a v = do
+  -- o a v
   byObj  <- readTVar (envWmesByObj  env)
   byAttr <- readTVar (envWmesByAttr env)
   byVal  <- readTVar (envWmesByVal  env)
@@ -146,37 +147,44 @@ wmesForAmemFeed False False False env o a v = do -- o a v
       s3 = Map.lookupDefault Set.empty v byVal
   return $ s1 `Set.intersection` s2 `Set.intersection` s3
 
-wmesForAmemFeed False False True env o a _ = do  -- o a *
+wmesForAmemFeed False False True env o a _ = do
+  -- o a w
   byObj  <- readTVar (envWmesByObj  env)
   byAttr <- readTVar (envWmesByAttr env)
   let s1 = Map.lookupDefault Set.empty o byObj
       s2 = Map.lookupDefault Set.empty a byAttr
   return $ s1 `Set.intersection` s2
 
-wmesForAmemFeed False True False env o _ v = do  -- o * v
+wmesForAmemFeed False True False env o _ v = do
+  -- o w v
   byObj  <- readTVar (envWmesByObj  env)
   byVal  <- readTVar (envWmesByVal  env)
   let s1 = Map.lookupDefault Set.empty o byObj
       s2 = Map.lookupDefault Set.empty v byVal
   return $ s1 `Set.intersection` s2
 
-wmesForAmemFeed False True True env o _ _ =      -- o * *
+wmesForAmemFeed False True True env o _ _ =
+  -- o w w
   liftM (Map.lookupDefault Set.empty o) (readTVar (envWmesByObj env))
 
-wmesForAmemFeed True False False env _ a v = do  -- * a v
+wmesForAmemFeed True False False env _ a v = do
+  -- w a v
   byAttr <- readTVar (envWmesByAttr env)
   byVal  <- readTVar (envWmesByVal  env)
   let s1 = Map.lookupDefault Set.empty a byAttr
       s2 = Map.lookupDefault Set.empty v byVal
   return $ s1 `Set.intersection` s2
 
-wmesForAmemFeed True False True env _ a _ =      -- * a *
+wmesForAmemFeed True False True env _ a _ =
+  -- w a w
   liftM (Map.lookupDefault Set.empty a) (readTVar (envWmesByAttr env))
 
-wmesForAmemFeed True True False env _ _ v =      -- * * v
+wmesForAmemFeed True True False env _ _ v =
+  -- w w v
   liftM (Map.lookupDefault Set.empty v) (readTVar (envWmesByVal env))
 
-wmesForAmemFeed True True True env _ _ _ =       -- * * *
+wmesForAmemFeed True True True env _ _ _ =
+  -- w w w
   liftM (Set.fromList . Map.elems) (readTVar (envWmes env))
 {-# INLINE wmesForAmemFeed #-}
 

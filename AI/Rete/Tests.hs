@@ -17,45 +17,45 @@
 module AI.Rete.Tests where
 
 import AI.Rete
-import AI.Rete.Flow
 import AI.Rete.Print
+import AI.Rete.Test
 import Control.Concurrent.STM
-import Control.Monad (void)
-import Data.List (permutations)
+import Debug.Trace (traceM)
 
-class (Monad m1, Monad m2) => InNewEnv m1 m2 where
-  inNewEnv :: (Env -> m1 ()) -> m2 ()
+opts :: Switch
+opts = nonVerboseData . netTopDown
 
-type Task m = Monad m => Env -> m ()
+test1 :: IO ()
+test1 = do
+  let printEnv env = do
+        s <- toString boundless opts env
+        traceM s
 
-class Monad m => AddWmeT m where
-  addWmeT :: (ToConstant o, ToConstant a, ToConstant v) => o -> a -> v -> Task m
+  atomically $ execPermutedTasksD
+    (after printEnv)
 
-instance InNewEnv IO IO where inNewEnv f = atomically createEnv >>= f
+    [ addWmeT     "sójka"  "jestPtak" True
+    , addWmeT     "wróbel" "jestPtak" True
 
-execPermutedTasks :: (Functor m, Monad m) => [m ()] -> m ()
-execPermutedTasks = mapM_ execTasks . permutations
-{-# INLINE execPermutedTasks #-}
+    , addProdT (c "wróbel" "jestPtak" True) [] []
+      (traceTokActionD "tok: ")
+    ]
 
-execTasks :: (Functor m, Monad m) => [m ()] -> m ()
-execTasks = mapM_ id
-{-# INLINE execTasks #-}
+-- test3 :: IO ()
+-- test3 = do
+--   let opts = nonVerboseData . netTopDown
 
-test3 :: IO ()
-test3 = do
-  let opts = nonVerboseData . netTopDown
+--   inNewEnv $ \env -> do
+--     atomically $ execPermutedTasks
+--       [ void $ addWme env "sójka"  "jestPtak" True
+--       , void $ addWme env "kawka"  "jestPtak" True
+--       , void $ addWme env "wróbel" "jestPtak" True
 
-  inNewEnv $ \env -> do
-    atomically $ execPermutedTasks
-      [ void $ addWme env "sójka"  "jestPtak" True
-      , void $ addWme env "kawka"  "jestPtak" True
-      , void $ addWme env "wróbel" "jestPtak" True
-
-      , void $ addProd env
-        (c "wróbel" "jestPtak" True) [] []
-        (traceTokActionD "tok: ")
-      ]
-    atomically (toString boundless opts env) >>= putStrLn
+--       , void $ addProd env
+--         (c "wróbel" "jestPtak" True) [] []
+--         (traceTokActionD "tok: ")
+--       ]
+--     atomically (toString boundless opts env) >>= putStrLn
 
   -- _    <- atomically $
 
@@ -74,7 +74,7 @@ test3 = do
           --           ])
 
   -- atomically (toString boundless opts env) >>= putStrLn
-  return ()
+  -- return ()
 
 -- test2 :: IO ()
 -- test2 = do
