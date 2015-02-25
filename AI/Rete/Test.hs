@@ -16,9 +16,16 @@
 
 module AI.Rete.Test
     (
+      -- * Testing tasks
       T
-    , inNewEnv
     , addWmeT
+    , removeWmeT
+    , addProdT
+    , addProdRT
+    , removeProdT
+
+      -- * Tasks execution
+    , inNewEnv
     , execTasks
     , execTasksD
     , execPermutedTasks
@@ -26,14 +33,64 @@ module AI.Rete.Test
     )
     where
 
-import AI.Rete
+import AI.Rete.Data
 import AI.Rete.Flow
+import AI.Rete.Net
 import Control.Concurrent.STM
 import Control.Monad (void)
 import Data.List (permutations)
 
+-- TESTING TASKS
+
 -- | Type of a testing task.
 type T m = Env -> m ()
+
+class Monad m => WmeT m where
+  -- | Task that adds a Wme.
+  addWmeT    :: (ToConstant o, ToConstant a, ToConstant v) => o -> a -> v -> T m
+
+  -- | Task that removes a Wme.
+  removeWmeT :: (ToConstant o, ToConstant a, ToConstant v) => o -> a -> v -> T m
+
+instance WmeT STM where
+  addWmeT    o a v env = void (addWme    env o a v)
+  removeWmeT o a v env = void (removeWme env o a v)
+  {-# INLINE addWmeT    #-}
+  {-# INLINE removeWmeT #-}
+
+instance WmeT IO where
+  addWmeT    o a v env = atomically (addWmeT    o a v env)
+  removeWmeT o a v env = atomically (removeWmeT o a v env)
+  {-# INLINE addWmeT    #-}
+  {-# INLINE removeWmeT #-}
+
+class Monad m => ProdT m where
+  -- | Task that adds a Prod.
+  addProdT    :: C -> [C] -> [N] -> Action -> T m
+
+  -- | Task that adds a Prod with a revoke Action.
+  addProdRT   :: C -> [C] -> [N] -> Action -> Action -> T m
+
+  -- | Task that removes a Prod.
+  removeProdT :: Prod -> T m
+
+instance ProdT STM where
+  addProdT  c' cs ns a   env = void (addProd    env c' cs ns a  )
+  addProdRT c' cs ns a r env = void (addProdR   env c' cs ns a r)
+  removeProdT prod       env = void (removeProd env prod)
+  {-# INLINE addProdT    #-}
+  {-# INLINE addProdRT   #-}
+  {-# INLINE removeProdT #-}
+
+instance ProdT IO where
+  addProdT  c' cs ns a   env = atomically (addProdT    c' cs ns a   env)
+  addProdRT c' cs ns a r env = atomically (addProdRT   c' cs ns a r env)
+  removeProdT prod       env = atomically (removeProdT prod         env)
+  {-# INLINE addProdT    #-}
+  {-# INLINE addProdRT   #-}
+  {-# INLINE removeProdT #-}
+
+-- TASKS EXECUTION
 
 class Monad m => InNewEnv m where
   -- | Executes an action in a newly created Env.
@@ -46,18 +103,6 @@ instance InNewEnv IO where
 instance InNewEnv STM where
   inNewEnv f = createEnv >>= f
   {-# INLINE inNewEnv #-}
-
-class Monad m => AddWmeT m where
-  -- | A testing task that adds a Wme.
-  addWmeT :: (ToConstant o, ToConstant a, ToConstant v) => o -> a -> v -> T m
-
-instance AddWmeT STM where
-  addWmeT o a v env = void (addWme env o a v)
-  {-# INLINE addWmeT #-}
-
-instance AddWmeT IO where
-  addWmeT o a v env = atomically (addWmeT o a v env)
-  {-# INLINE addWmeT #-}
 
 -- | Executes tasks sequentially using Env.
 execTasks :: Monad m => m Env -> [T m] -> m ()
