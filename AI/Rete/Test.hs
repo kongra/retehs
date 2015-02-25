@@ -18,6 +18,7 @@ module AI.Rete.Test
     (
       -- * Testing tasks
       T
+    , tcompose
     , addWmeT
     , removeWmeT
     , addProdT
@@ -30,6 +31,12 @@ module AI.Rete.Test
     , execTasksD
     , execPermutedTasks
     , execPermutedTasksD
+
+      -- * Options
+    , noOpts
+    , before
+    , after
+    , interpose
     )
     where
 
@@ -38,12 +45,18 @@ import AI.Rete.Flow
 import AI.Rete.Net
 import Control.Concurrent.STM
 import Control.Monad (void)
-import Data.List (permutations)
+import Data.List (permutations, intersperse)
 
 -- TESTING TASKS
 
 -- | Type of a testing task.
 type T m = Env -> m ()
+
+-- | Creates a composition of tasks. Composed tasks in the result
+-- execute sequentially in order.
+tcompose :: Monad m => [T m] -> T m
+tcompose ts env = mapM_ (\t -> t env) ts
+{-# INLINE tcompose #-}
 
 class Monad m => WmeT m where
   -- | Task that adds a Wme.
@@ -77,7 +90,7 @@ class Monad m => ProdT m where
 instance ProdT STM where
   addProdT  c' cs ns a   env = void (addProd    env c' cs ns a  )
   addProdRT c' cs ns a r env = void (addProdR   env c' cs ns a r)
-  removeProdT prod       env = void (removeProd env prod)
+  removeProdT prod       env = void (removeProd env prod        )
   {-# INLINE addProdT    #-}
   {-# INLINE addProdRT   #-}
   {-# INLINE removeProdT #-}
@@ -89,6 +102,43 @@ instance ProdT IO where
   {-# INLINE addProdT    #-}
   {-# INLINE addProdRT   #-}
   {-# INLINE removeProdT #-}
+
+-- OPTIONS
+
+data Opts m =
+  Opts
+  {
+    optsBefore    :: Maybe (T m)
+  , optsAfter     :: Maybe (T m)
+  , optsInterpose :: Maybe (T m)
+  }
+
+noopts :: Opts m
+noopts = Opts Nothing Nothing Nothing
+
+type Switch m = Opts m -> Opts m
+
+-- | Creates a Switch that sets the task to be executed before
+-- executing a sequence of tasks.
+before :: T m -> Switch m
+before t o = o { optsBefore = Just t }
+{-# INLINE before #-}
+
+-- | Creates a Switch that sets the task to be executed after
+-- executing a sequence of tasks.
+after :: T m -> Switch m
+after t o = o { optsAfter = Just t }
+{-# INLINE after #-}
+
+-- | Creates a Switch that sets the task to interpose the executed
+-- sequence of tasks.
+interpose :: T m -> Switch m
+interpose t o = o { optsInterpose = Just t }
+{-# INLINE interpose #-}
+
+noOpts :: Switch m
+noOpts _ = noopts
+{-# INLINE noOpts #-}
 
 -- TASKS EXECUTION
 
@@ -105,27 +155,38 @@ instance InNewEnv STM where
   {-# INLINE inNewEnv #-}
 
 -- | Executes tasks sequentially using Env.
-execTasks :: Monad m => m Env -> [T m] -> m ()
-execTasks env ts = do
+execTasks :: Monad m => m Env -> Switch m -> [T m] -> m ()
+execTasks env s ts = do
+  let opts = s noopts
+      ts1  = case optsInterpose opts of
+        Nothing -> ts
+        Just t  -> intersperse t ts
+      ts2 = case optsBefore opts of
+        Nothing -> ts1
+        Just t  -> t:ts1
+      ts3 = case optsAfter opts of
+        Nothing -> ts2
+        Just t  -> ts2 ++ [t]
+
   e <- env
-  mapM_ (\t -> t e) ts
+  mapM_ (\t -> t e) ts3
 {-# INLINE execTasks #-}
 
 -- | Executes tasks sequentially using newly created Env.
-execTasksD :: InNewEnv m => [T m] -> m ()
-execTasksD ts = inNewEnv $ \env -> execTasks (return env) ts
+execTasksD :: InNewEnv m => Switch m -> [T m] -> m ()
+execTasksD s ts = inNewEnv $ \env -> execTasks (return env) s ts
 {-# INLINE execTasksD #-}
 
 -- | Executes permutations of tasks. For every permutation we provide
 -- an Env.
-execPermutedTasks :: Monad m => m Env -> [T m] -> m ()
-execPermutedTasks env = mapM_ (execTasks env) . permutations
+execPermutedTasks :: Monad m => m Env -> Switch m -> [T m] -> m ()
+execPermutedTasks env s = mapM_ (execTasks env s) . permutations
 {-# INLINE execPermutedTasks #-}
 
 -- | Executes permutations of tasks. For every permutation a newly
 -- created Env is used.
-execPermutedTasksD :: InNewEnv m => [T m] -> m ()
-execPermutedTasksD = mapM_ execTasksD . permutations
+execPermutedTasksD :: InNewEnv m => Switch m -> [T m] -> m ()
+execPermutedTasksD s = mapM_ (execTasksD s) . permutations
 {-# INLINE execPermutedTasksD #-}
 
 -- test1 :: IO ()
