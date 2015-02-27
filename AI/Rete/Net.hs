@@ -111,9 +111,11 @@ activateAmemOnCreation :: Env
                        -> Val  Constant
                        -> STM ()
 activateAmemOnCreation env amem o a v = do
-  let (Obj  o') = o
-      (Attr a') = a
-      (Val  v') = v
+  let (Obj  o')    = o
+      (Attr a')    = a
+      (Val  v')    = v
+      isWildcard s = s == wildcardConstant
+
   wmes <- wmesForAmemFeed (isWildcard o') (isWildcard a') (isWildcard v')
           env o a v
 
@@ -129,8 +131,6 @@ activateAmemOnCreation env amem o a v = do
     modifyTVar' (amemWmesByObj  amem) (wmesIndexInsert (wmeObj  wme) wme)
     modifyTVar' (amemWmesByAttr amem) (wmesIndexInsert (wmeAttr wme) wme)
     modifyTVar' (amemWmesByVal  amem) (wmesIndexInsert (wmeVal  wme) wme)
-  where
-    isWildcard s = s == wildcardConstant
 {-# INLINE activateAmemOnCreation #-}
 
 wmesForAmemFeed :: Bool -> Bool -> Bool

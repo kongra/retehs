@@ -32,12 +32,17 @@ test1 = do
         traceM s
 
   atomically $ execPermutedTasksD
-    (after printEnv)
+    -- (after printEnv)
+    noOpts
 
     [ addWmeT     "sójka"  "jestPtak" True
     , addWmeT     "wróbel" "jestPtak" True
+    , addWmeT     "kawka"  "jestPtak" True
 
-    , addProdT (c "wróbel" "jestPtak" True) [] []
+    , addProdT
+      ( c "wróbel" "jestPtak" True)
+      [ c "sójka" "jestPtak" True ]
+      []
       (traceTokActionD "tok: ")
     ]
 

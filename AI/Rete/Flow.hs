@@ -87,10 +87,6 @@ toListT :: Foldable f => TVar (f a) -> STM [a]
 toListT = toListM . readTVar
 {-# INLINE toListT #-}
 
--- toTSeqFront :: TVar (Seq.Seq a) -> a -> STM ()
--- toTSeqFront s = modifyTVar' s . (Seq.<|)
--- {-# INLINE toTSeqFront #-}
-
 toTSeqEnd :: TVar (Seq.Seq a) -> a -> STM ()
 toTSeqEnd s x = modifyTVar' s (Seq.|> x)
 {-# INLINE toTSeqEnd #-}
@@ -278,7 +274,7 @@ instance ToConstant Word64  where
 
 instance ToConstant String where
   -- Raw String is always a constant.
-  toConstant _   []   = return emptyConstant
+  toConstant _   ""   = return emptyConstant
   toConstant env name = internConstant env name
   {-# INLINE toConstant   #-}
 
@@ -704,7 +700,7 @@ fieldConstant V Wme { wmeVal  = Val  s } = s
 
 -- | Matches a token to wmes in Amem using the Amem's indexes.
 matchingAmemWmes :: [JoinTest] -> Either Btok Ntok -> Amem -> STM [Wme]
-matchingAmemWmes [] _ amem = toListT (amemWmes amem) -- No tests, take all Wmes.
+matchingAmemWmes []    _   amem = toListT (amemWmes amem) -- Take all Wmes.
 matchingAmemWmes tests tok amem = -- At least one test specified.
   toListM (foldr (liftM2 Set.intersection) s sets)
   where
