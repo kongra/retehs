@@ -221,16 +221,16 @@ data Env =
   Env
   {
     -- | State of the Id generator.
-    envIdState :: !(TVar Id)
+    envIdState    :: !(TVar Id)
 
     -- | Registry of (interned) Constants.
-  , envConstants :: !(TVar (Map.HashMap String Constant))
+  , envConstants  :: !(TVar (Map.HashMap String Constant))
 
     -- | Registry of (interned) Variables.
-  , envVariables :: !(TVar (Map.HashMap String Variable))
+  , envVariables  :: !(TVar (Map.HashMap String Variable))
 
     -- | All Wmes indexed by their WmeKey.
-  , envWmes :: !(TVar (Map.HashMap WmeKey Wme))
+  , envWmes       :: !(TVar (Map.HashMap WmeKey Wme))
 
     -- 3 Wme indexes by Wme Field value
   , envWmesByObj  :: !(TVar WmesByObj )
@@ -238,13 +238,13 @@ data Env =
   , envWmesByVal  :: !(TVar WmesByVal )
 
     -- | Known alpha memories indexed by their WmeKey.
-  , envAmems :: !(TVar (Map.HashMap WmeKey Amem))
+  , envAmems      :: !(TVar (Map.HashMap WmeKey Amem))
 
     -- | Productions the Env knows about.
-  , envProds :: !(TVar (Set.HashSet Prod))
+  , envProds      :: !(TVar (Set.HashSet Prod))
 
     -- | The Dummy Top Node.
-  , envDtn :: !Dtn
+  , envDtn        :: !Dtn
   }
 
 -- FIELDS AND THEIR VALUES
@@ -454,10 +454,10 @@ data Amem =
     amemSuccessors :: !(TVar (Seq.Seq AmemSuccessor))
 
     -- | The number of join or negative nodes using this Amem.
-  , amemRefCount :: !(TVar Int)
+  , amemRefCount   :: !(TVar Int)
 
     -- | The wmes in this Amem (unindexed).
-  , amemWmes :: !(TVar (Set.HashSet Wme))
+  , amemWmes       :: !(TVar (Set.HashSet Wme))
 
     -- | Wmes are indexed by their Field value.
   , amemWmesByObj  :: !(TVar WmesByObj)
@@ -465,9 +465,9 @@ data Amem =
   , amemWmesByVal  :: !(TVar WmesByVal)
 
     -- Keys to identify the α memory in the α memories registry.
-  , amemObj  :: !(Obj  Constant)
-  , amemAttr :: !(Attr Constant)
-  , amemVal  :: !(Val  Constant)
+  , amemObj        :: !(Obj  Constant)
+  , amemAttr       :: !(Attr Constant)
+  , amemVal        :: !(Val  Constant)
   }
 
 instance Eq Amem where

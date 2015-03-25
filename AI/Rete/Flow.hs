@@ -178,7 +178,7 @@ genid :: Env -> STM Id
 genid Env { envIdState = eid } = do
   recent <- readTVar eid
 
-  -- Hopefully not in a achievable time, but ...
+  -- Hopefully not in an achievable time, but ...
   when (recent == maxBound) (error "PANIC (1): Id OVERFLOW.")
 
   let new = recent + 1

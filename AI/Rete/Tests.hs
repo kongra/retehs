@@ -35,13 +35,13 @@ test1 = do
     -- (after printEnv)
     noOpts
 
-    [ addWmeT     "sójka"  "jestPtak" True
-    , addWmeT     "wróbel" "jestPtak" True
-    , addWmeT     "kawka"  "jestPtak" True
+    [ addWmeT "sójka"  "jestPtak" True
+    , addWmeT "wróbel" "jestPtak" True
+    , addWmeT "kawka"  "jestPtak" True
 
     , addProdT
       ( c "wróbel" "jestPtak" True)
-      [ c "sójka" "jestPtak" True ]
+      [ c "sójka"  "jestPtak" True ]
       []
       (traceTokActionD "tok: ")
     ]
