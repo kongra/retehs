@@ -608,7 +608,7 @@ data VarVal = ValidVarVal   !Constant
 
 instance Show VarVal where
   show (ValidVarVal   s ) = show s
-  show (NoVarVal      v ) = "ERROR (1): NO VALUE FOR VAR " ++ show v  ++ "."
+  show (NoVarVal      v ) = "retehs ERROR (1): NO VALUE FOR VAR " ++ show v
   {-# INLINE show #-}
 
 -- | Returns a value of a variable inside an Action.
@@ -619,8 +619,10 @@ val Actx { actxEnv = env, actxProd = prod, actxWmes = wmes } vi = do
     Nothing             -> return (NoVarVal v)
     Just (Location d f) -> return (ValidVarVal (fieldConstant f wme'))
       where
-        wme  = nthDef    (error ("PANIC (6): ILLEGAL INDEX " ++ show d)) d wmes
-        wme' = fromMaybe (error  "PANIC (7): wmes !! d RETURNED Nothing.") wme
+        wme  = nthDef (error ("retehs PANIC (6): ILLEGAL INDEX " ++ show d))
+               d wmes
+        wme' = fromMaybe (error "retehs PANIC (7): wmes !! d RETURNED Nothing")
+               wme
 
 -- | Works like val, but raises an early error when a valid value
 -- can't be returned.

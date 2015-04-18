@@ -179,7 +179,7 @@ genid Env { envIdState = eid } = do
   recent <- readTVar eid
 
   -- Hopefully not in an achievable time, but ...
-  when (recent == maxBound) (error "PANIC (1): Id OVERFLOW.")
+  when (recent == maxBound) (error "retehs PANIC (1): Id OVERFLOW")
 
   let new = recent + 1
   writeTVar eid new
@@ -326,12 +326,12 @@ class ToVar a where
   var :: a -> Var
 
 instance ToVar String where
-  var ""   = error "ERROR (2): EMPTY VARIABLE NAME."
+  var ""   = error "retehs ERROR (2): EMPTY VARIABLE NAME"
   var name = (`internVariable` name)
   {-# INLINE var #-}
 
 instance ToVar NamedPrimitive where
-  var (NamedPrimitive _ "") = error "ERROR (3): EMPTY VARIABLE NAME."
+  var (NamedPrimitive _ "") = error "retehs ERROR (3): EMPTY VARIABLE NAME"
   var np                    = \_ -> return (NamedPrimitiveVariable np)
   {-# INLINE var #-}
 
@@ -685,8 +685,10 @@ passJoinTest wmes wme
   JoinTest { joinField1 = f1, joinField2 = f2, joinDistance = d } =
     fieldConstant f1 wme == fieldConstant f2 wme2'
     where
-      wme2  = nthDef    (error ("PANIC (2): ILLEGAL INDEX " ++ show d)) d wmes
-      wme2' = fromMaybe (error  "PANIC (3): wmes !! d RETURNED Nothing.") wme2
+      wme2  = nthDef (error ("retehs PANIC (2): ILLEGAL INDEX " ++ show d))
+              d wmes
+      wme2' = fromMaybe (error  "retehs PANIC (3): wmes !! d RETURNED Nothing")
+              wme2
 {-# INLINE passJoinTest #-}
 
 -- | Returns a value of a Field in Wme.
@@ -715,8 +717,10 @@ amemWmesForTest wmes amem
       A -> amemWmesForIndex (Attr value) (amemWmesByAttr amem)
       V -> amemWmesForIndex (Val  value) (amemWmesByVal  amem)
     where
-      wme   = nthDef    (error ("PANIC (4): ILLEGAL INDEX " ++ show d)) d wmes
-      wme'  = fromMaybe (error  "PANIC (5): wmes !! d RETURNED Nothing.") wme
+      wme   = nthDef (error ("retehs PANIC (4): ILLEGAL INDEX " ++ show d))
+              d wmes
+      wme'  = fromMaybe (error "retehs PANIC (5): wmes !! d RETURNED Nothing")
+              wme
       value = fieldConstant f2 wme'
 {-# INLINE amemWmesForTest #-}
 
